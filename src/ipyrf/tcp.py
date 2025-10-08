@@ -5,10 +5,7 @@ import time
 from typing import Optional
 
 from .logger import Logger
-from .controllers import (
-    BasePacingController,
-    StaticPacingController,
-)
+from .controllers import BasePacingController
 
 
 def set_tcp_mss(sock: socket.socket, mss: int):
@@ -18,7 +15,13 @@ def set_tcp_mss(sock: socket.socket, mss: int):
         raise argparse.ArgumentTypeError(f"Failed to set TCP_MAXSEG: {e}")
 
 
-def server(log: Logger, bind_addr: str, port: int, congestion_control: Optional[str]):
+def server(
+    log: Logger,
+    bind_addr: str,
+    port: int,
+    interval_seconds: float,
+    congestion_control: Optional[str],
+):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((bind_addr, port))
@@ -62,7 +65,7 @@ def server(log: Logger, bind_addr: str, port: int, congestion_control: Optional[
                 break
             bytes_recv += n
             now = time.time()
-            if (now - last_ts) >= 1:
+            if (now - last_ts) >= interval_seconds:
                 log.update(
                     start_ts=last_ts,
                     end_ts=now,
@@ -90,31 +93,13 @@ def client(
     host: str,
     port: int,
     congestion_control: Optional[str],
-    target_duration: int | None,
     set_mss: Optional[int],
-    bandwidth_bps: Optional[float] = None,
-    controller: Optional[BasePacingController] = None,
-):
-    try:
-        effective_controller = controller or StaticPacingController(
-            bandwidth_bps, set_mss if set_mss else 1200
-        )
-        sock = prepare_client_socket(log, host, port, congestion_control, set_mss)
-        if sock is None:
-            return
-        client_core(log, sock, host, port, target_duration, effective_controller)
-    finally:
-        effective_controller.request_stop()
-
-
-def client_core(
-    log: Logger,
-    sock: socket.socket,
-    host: str,
-    port: int,
-    target_duration: int | None,
     controller: BasePacingController,
 ):
+    sock = prepare_client_socket(log, host, port, congestion_control, set_mss)
+    if sock is None:
+        return
+
     log.start(host, port)
 
     payload = b"\x00" * (64 * 1024)
@@ -122,17 +107,15 @@ def client_core(
     start = time.time()
     last_ts = start
     last_bytes = 0
-    end_time = None if target_duration is None else start + target_duration
     bytes_sent = 0
     stop_reason = "unknown"
 
+    # Start timing if the controller has a duration
+    controller.start()
+
     while True:
-        if (
-            end_time is not None and time.time() >= end_time
-        ) or controller.should_stop():
-            stop_reason = (
-                "duration" if controller.should_stop() is False else "user-stop"
-            )
+        if controller.should_stop():
+            stop_reason = controller.stop_reason()
             break
         if bytes_sent == 0:
             log.test(host, port, start)

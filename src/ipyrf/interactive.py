@@ -157,6 +157,9 @@ class InteractiveController(BasePacingController):
     def should_stop(self) -> bool:
         return self.stop_event.is_set()
 
+    def stop_reason(self) -> str:
+        return "user-stop"
+
     def reset(self, initial_bps: float | None):
         with self.lock:
             if initial_bps is None:
@@ -195,7 +198,7 @@ class InteractiveController(BasePacingController):
     def request_stop(self):
         self.stop_event.set()
 
-    def join(self):
+    def stop(self):
         if self.keyloop_thread is not None:
             self.keyloop_thread.join()
             self.keyloop_thread = None

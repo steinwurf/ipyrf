@@ -7,7 +7,8 @@ import sys
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
-from .interactive import InteractiveController, start_interactive_keys
+from .interactive import InteractiveController
+from .controllers import StaticPacingController
 
 
 def main():
@@ -73,9 +74,7 @@ def main():
         "--interactive", action="store_true", help="Run client in interactive mode"
     )
 
-    tcp_cli.add_argument(
-        "--interval", type=float, default=1.0, help="Stats interval (interactive mode)"
-    )
+    tcp_cli.add_argument("--interval", type=float, default=1.0, help="Stats interval")
 
     udp_parser = subp.add_parser("udp", help="UDP mode")
     udp_sub = udp_parser.add_subparsers(dest="role", required=True)
@@ -120,7 +119,7 @@ def main():
     controller = None
     if args.protocol == "udp":
         if args.role == "server":
-            udp.server(log, args.address, args.port)
+            udp.server(log, args.address, args.port, args.interval)
         else:
             bw = (
                 args.bandwidth or parse_bandwidth("50M")
@@ -129,21 +128,23 @@ def main():
             )
             if args.interactive:
                 controller = InteractiveController(bw, args.length, args.interval)
-            # Use infinite duration for interactive mode, otherwise use specified time
-            duration = None if args.interactive else args.time
+            else:
+                controller = StaticPacingController(
+                    bw, max(args.length, udp.UDP_HDR.size), args.time, args.interval
+                )
             udp.client(
                 log,
                 args.address,
                 args.port,
-                duration,
-                bw,
                 args.length,
                 controller,
             )
 
     else:
         if args.role == "server":
-            tcp.server(log, args.address, args.port, args.congestion_control)
+            tcp.server(
+                log, args.address, args.port, args.interval, args.congestion_control
+            )
         else:
             if args.interactive:
                 quantum = args.set_mss if args.set_mss else 1200
@@ -151,18 +152,21 @@ def main():
                 controller = InteractiveController(
                     args.bandwidth, quantum, args.interval
                 )
-            # Use infinite duration for interactive mode, otherwise use specified time
-            duration = None if args.interactive else args.time
+            else:
+                controller = StaticPacingController(
+                    args.bandwidth,
+                    args.set_mss if args.set_mss else 1200,
+                    args.time,
+                    args.interval,
+                )
             tcp.client(
                 log,
                 args.address,
                 args.port,
                 args.congestion_control,
-                duration,
                 args.set_mss,
-                args.bandwidth,
                 controller,
             )
 
     if controller is not None:
-        controller.join()
+        controller.stop()

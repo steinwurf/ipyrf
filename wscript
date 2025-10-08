@@ -1,0 +1,84 @@
+#! /usr/bin/env python
+# encoding: utf-8
+
+import shutil
+import os
+import waflib
+import hashlib
+import os.path
+import tempfile
+import platform
+
+from waflib.Build import BuildContext
+
+APPNAME = "plumr"
+VERSION = "36.0.0"
+
+
+def options(opt):
+    opts = opt.add_option_group("Test")
+    opts.add_option(
+        "--filter",
+        default=None,
+        dest="filter",
+        help='Select tests based on their name. E.g. "test_ipyrf"',
+    )
+
+
+class TestContext(BuildContext):
+    cmd = "test"
+    fun = "test"
+
+
+def build(ctx):
+    pass
+
+
+def test(ctx):
+    pip_install, venv = _create_venv(ctx=ctx, location="test")
+
+    if pip_install:
+        venv.run("python -m pip install -e .")
+
+    cmd_options = ""
+
+    if ctx.options.filter:
+        cmd_options += f"-k '{ctx.options.filter}'"
+
+    venv.run(f"pytest -x {cmd_options} test")
+
+
+def _create_venv(ctx, location):
+    requirements_txt = os.path.join(location, "requirements.txt")
+    requirements_in = os.path.join(location, "requirements.in")
+
+    if not os.path.isfile(requirements_txt):
+        with ctx.create_virtualenv() as venv:
+            venv.run("python -m pip install pip-tools")
+            venv.run(
+                "pip-compile {} --output-file {}".format(
+                    requirements_in, requirements_txt
+                )
+            )
+    # Hash the requirements.txt
+    sha1 = hashlib.sha1(
+        (open(requirements_txt, "r").read()).encode("utf-8")
+    ).hexdigest()[:6]
+
+    # venv name
+    name = f"venv-{location}-{sha1}"
+
+    if os.path.isdir(name):
+        # If directly already exits we should already have installed everything
+        pip_install = False
+    else:
+        pip_install = True
+
+    # Crate the venv
+    venv = ctx.create_virtualenv(name=name, overwrite=False)
+
+    if pip_install:
+        venv.env["PIP_IGNORE_INSTALLED"] = ""
+        venv.run("python -m pip install -r {}".format(requirements_txt))
+
+    return pip_install, venv

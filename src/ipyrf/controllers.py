@@ -21,10 +21,13 @@ class BasePacingController:
     def should_stop(self) -> bool:
         return False
 
-    def request_stop(self):
+    def stop_reason(self) -> str:
+        return "unknown"
+
+    def start(self):
         pass
 
-    def join(self):
+    def stop(self):
         pass
 
 
@@ -33,10 +36,13 @@ class StaticPacingController(BasePacingController):
         self,
         bandwidth_bps: Optional[float],
         quantum_bytes: int,
-        interval_seconds: float = 1.0,
+        duration_seconds: float,
+        interval_seconds: float,
     ):
         super().__init__(interval_seconds=interval_seconds)
         self.bandwidth_bps = bandwidth_bps
+        self.duration_seconds = duration_seconds
+        self.start_time = None
         self.tb: Optional[TokenBucket] = None
         if bandwidth_bps is not None:
             self.tb = TokenBucket(bandwidth_bps, quantum_bytes)
@@ -57,3 +63,15 @@ class StaticPacingController(BasePacingController):
         if self.bandwidth_bps is None:
             return {}
         return {"target_bandwidth_bps": float(self.bandwidth_bps)}
+
+    def start(self):
+        """Call this when the test starts to begin duration tracking."""
+        self.start_time = time.time()
+
+    def should_stop(self) -> bool:
+        """Check if the test should stop based on duration."""
+        assert self.start_time is not None
+        return (time.time() - self.start_time) >= self.duration_seconds
+
+    def stop_reason(self) -> str:
+        return "duration"

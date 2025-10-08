@@ -29,6 +29,50 @@ From source (editable):
    python3 -m pip install -U pip build
    python3 -m pip install -e .
 
+Development
+-----------
+
+For development, install with test dependencies:
+
+.. code-block:: bash
+
+   python3 -m pip install -e ".[test]"
+
+Running Tests
+~~~~~~~~~~~~~
+
+The project includes a comprehensive test suite using pytest:
+
+.. code-block:: bash
+
+   # Run all tests
+   python -m pytest tests/
+
+   # Run only unit tests (fast)
+   python -m pytest tests/ -m "not integration"
+
+   # Run only integration tests
+   python -m pytest tests/ -m "integration"
+
+   # Run with coverage
+   python -m pytest tests/ --cov=src/ipyrf --cov-report=html
+
+   # Use the test runner script
+   ./run_tests.py --type fast --verbose
+
+Test Categories
+~~~~~~~~~~~~~~~
+
+- **Unit tests**: Fast tests that don't require network access
+- **Integration tests**: Tests that require network functionality
+- **Network tests**: Tests that create actual network connections
+- **Slow tests**: Tests that take longer to run (marked with @pytest.mark.slow)
+
+Continuous Integration
+~~~~~~~~~~~~~~~~~~~~~~
+
+The project uses GitHub Actions for continuous integration, testing against Python 3.8-3.12.
+
 Usage
 -----
 

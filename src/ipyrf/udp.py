@@ -5,14 +5,14 @@ import time
 from typing import Optional, Tuple
 
 from .logger import Logger
-from .controllers import BasePacingController, StaticPacingController
+from .controllers import BasePacingController
 
 
 UDP_HDR = struct.Struct("!I Q I")
 FIN_FLAG = 0x1
 
 
-def server(log: Logger, bind_addr: str, port: int):
+def server(log: Logger, bind_addr: str, port: int, interval_seconds: float):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((bind_addr, port))
@@ -67,7 +67,7 @@ def server(log: Logger, bind_addr: str, port: int):
         if last_seq_seen_last == -1:
             last_seq_seen_last = last_seq_seen
 
-        if (now - last_ts) >= 1:
+        if (now - last_ts) >= interval_seconds:
             sent_packets = last_seq_seen - last_seq_seen_last
             received = total_pkts - last_pkts
             lost = max(0, sent_packets - received)
@@ -106,25 +106,6 @@ def client(
     log: Logger,
     host: str,
     port: int,
-    duration: int,
-    bandwidth_bps: float,
-    payload_len: int,
-    controller: Optional[BasePacingController] = None,
-):
-    try:
-        effective_controller = controller or StaticPacingController(
-            bandwidth_bps, max(payload_len, UDP_HDR.size)
-        )
-        client_core(log, host, port, duration, payload_len, effective_controller)
-    finally:
-        effective_controller.request_stop()
-
-
-def client_core(
-    log: Logger,
-    host: str,
-    port: int,
-    duration: int | None,
     payload_len: int,
     controller: BasePacingController,
 ):
@@ -140,16 +121,18 @@ def client_core(
     last_ts = start
     last_bytes = 0
     last_pkts = 0
-    end_time = start + duration
     seq = 0
     bytes_sent = 0
     pkts_sent = 0
 
     payload = bytearray(payload_len)
 
-    stop_reason = "duration"
+    stop_reason = controller.stop_reason()
 
-    while (end_time is None or time.time() < end_time) and not controller.should_stop():
+    # Start timing if the controller has a duration
+    controller.start()
+
+    while not controller.should_stop():
         UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), 0)
 
         if controller.is_pacing():
