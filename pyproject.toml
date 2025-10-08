@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ipyrf"
+version = "0.1.0"
+description = "A tiny iperf3-like tool with JSON output (TCP/UDP)"
+readme = "README.rst"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Steinwurf ApS" }
+]
+keywords = ["network", "iperf", "throughput", "udp", "tcp", "benchmark"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: System :: Networking",
+  "Topic :: System :: Benchmark",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/steinwurf/ipyrf"
+Repository = "https://github.com/steinwurf/ipyrf"
+Issues = "https://github.com/steinwurf/ipyrf/issues"
+
+[project.scripts]
+ipyrf = "ipyrf.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ipyrf*"]
+exclude = []
