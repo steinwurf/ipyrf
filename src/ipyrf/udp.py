@@ -5,7 +5,7 @@ import time
 from typing import Optional, Tuple
 
 from .logger import Logger
-from .token_bucket import TokenBucket
+from .controllers import BasePacingController, StaticPacingController
 
 
 UDP_HDR = struct.Struct("!I Q I")
@@ -109,6 +109,24 @@ def client(
     duration: int,
     bandwidth_bps: float,
     payload_len: int,
+    controller: Optional[BasePacingController] = None,
+):
+    try:
+        effective_controller = controller or StaticPacingController(
+            bandwidth_bps, max(payload_len, UDP_HDR.size)
+        )
+        client_core(log, host, port, duration, payload_len, effective_controller)
+    finally:
+        effective_controller.request_stop()
+
+
+def client_core(
+    log: Logger,
+    host: str,
+    port: int,
+    duration: int | None,
+    payload_len: int,
+    controller: BasePacingController,
 ):
     if payload_len < UDP_HDR.size:
         payload_len = UDP_HDR.size
@@ -117,8 +135,6 @@ def client(
     sock.connect((host, port))
 
     log.start(host, port)
-
-    tb = TokenBucket(bandwidth_bps, payload_len)
 
     start = time.time()
     last_ts = start
@@ -132,14 +148,12 @@ def client(
     payload = bytearray(payload_len)
 
     stop_reason = "duration"
-    while time.time() < end_time:
+
+    while (end_time is None or time.time() < end_time) and not controller.should_stop():
         UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), 0)
 
-        while True:
-            sleep_time = tb.take(len(payload))
-            if sleep_time <= 0:
-                break
-            time.sleep(sleep_time)
+        if controller.is_pacing():
+            controller.maybe_sleep(len(payload))
         try:
             if bytes_sent == 0:
                 log.test(host, port, start)
@@ -154,13 +168,14 @@ def client(
         pkts_sent += 1
         seq += 1
         now = time.time()
-        if (now - last_ts) >= 1:
+        if (now - last_ts) >= controller.interval_seconds:
+            extra = controller.get_update_fields()
             log.update(
                 start_ts=last_ts,
                 end_ts=now,
                 bytes=bytes_sent - last_bytes,
                 packets=pkts_sent - last_pkts,
-                target_bandwidth_bps=bandwidth_bps,
+                **extra,
             )
             last_ts = now
             last_bytes = bytes_sent
@@ -181,7 +196,7 @@ def client(
         bytes=bytes_sent,
         packets=pkts_sent,
         bits_per_second=(bytes_sent * 8.0) / dur,
-        target_bandwidth_bps=bandwidth_bps,
+        **controller.get_update_fields(),
         payload_len=payload_len,
         stop_reason=stop_reason,
     )

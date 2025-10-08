@@ -18,21 +18,24 @@ From PyPI (recommended):
 
 .. code-block:: bash
 
-   pip install ipyrf
+   python3 -m pip install ipyrf
 
 From source (editable):
 
 .. code-block:: bash
 
-   python -m venv .venv
+   python3 -m venv .venv
    source .venv/bin/activate
-   pip install -U pip build
-   pip install -e .
+   python3 -m pip install -U pip build
+   python3 -m pip install -e .
 
 Usage
 -----
 
 The package installs a console script named ``ipyrf``.
+
+Quick examples
+~~~~~~~~~~~~~~
 
 TCP server:
 
@@ -59,6 +62,79 @@ UDP client (with bandwidth cap and optional payload size):
 
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 -l 1200
+
+Interactive mode
+----------------
+
+You can run clients in an interactive mode that lets you adjust the pacing live using your keyboard. Use ``--interactive`` and optionally ``--interval`` (seconds between stats updates). When interactive is enabled, the same client logic is used underneath with a dynamic pacing controller.
+
+Controls shown in the terminal:
+
+- ``←``: -1 Mbps
+- ``→``: +1 Mbps
+- ``↓``: -10%
+- ``↑``: +10%
+- ``0``: reset to initial bandwidth (or unlimited for TCP if none was provided)
+- ``u``: unlimited (disable pacing)
+- ``q``: quit
+
+Examples:
+
+.. code-block:: bash
+
+   # TCP interactive (unlimited unless you pass --bandwidth)
+   ipyrf tcp client 127.0.0.1 --port 5201 --interactive
+
+   # TCP interactive with initial pacing and custom interval
+   ipyrf tcp client 127.0.0.1 --port 5201 --bandwidth 200M --set-mss 1400 --interactive --interval 0.5
+
+   # UDP interactive (requires initial --bandwidth)
+   ipyrf udp client 127.0.0.1 --port 5201 --bandwidth 50M -l 1200 --interactive
+
+CLI overview
+------------
+
+Top-level structure:
+
+.. code-block:: text
+
+   ipyrf [tcp|udp] [server|client] [OPTIONS]
+
+Common options (both protocols, both roles):
+
+- ``--port``: Port (default 5201)
+- ``--logfile``: Redirect output to a file
+- ``--json_log``: Emit logs in JSON (newline-delimited)
+
+TCP-specific options:
+
+- ``tcp server ADDRESS``: Start a TCP server on ``ADDRESS``
+- ``tcp client ADDRESS``: Start a TCP client to connect to ``ADDRESS``
+- ``--congestion-control``: Select Linux TCP CC algorithm if available
+- ``--time``: Test duration (seconds), default 10
+- ``--bandwidth``: Target rate (e.g., ``50M``); used for pacing, optional
+- ``--set-mss``: Set approximate MSS via ``TCP_MAXSEG``
+- ``--interactive``: Enable interactive pacing controls
+- ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
+
+UDP-specific options:
+
+- ``udp server ADDRESS``: Start a UDP server on ``ADDRESS``
+- ``udp client ADDRESS``: Start a UDP client to ``ADDRESS``
+- ``--time``: Test duration (seconds), default 10
+- ``--bandwidth``: Target rate (required for UDP client; e.g., ``50M``)
+- ``-l/--length``: UDP payload length (default 1200)
+- ``--interactive``: Enable interactive pacing controls
+- ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
+
+JSON logging
+------------
+
+Add ``--json_log`` to switch all output to newline-delimited JSON objects. This is useful for machine parsing or dashboards. Example:
+
+.. code-block:: bash
+
+   ipyrf tcp client 127.0.0.1 --time 5 --json_log | jq
 
 Notes
 -----

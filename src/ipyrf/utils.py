@@ -58,3 +58,15 @@ def parse_ip(s: str) -> str:
     except OSError:
         pass
     raise argparse.ArgumentTypeError(f"Invalid IP address: {s}")
+
+
+def human_bps(bps: float) -> str:
+    if bps == float("inf"):
+        return "unlimited"
+    if bps < 1e3:
+        return f"{bps:.0f} bps"
+    if bps < 1e6:
+        return f"{bps/1e3:.1f} Kbps"
+    if bps < 1e9:
+        return f"{bps/1e6:.1f} Mbps"
+    return f"{bps/1e9:.2f} Gbps"

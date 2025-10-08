@@ -7,6 +7,7 @@ import sys
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
+from .interactive import InteractiveController, start_interactive_keys
 
 
 def main():
@@ -58,12 +59,22 @@ def main():
     tcp_cli.add_argument(
         "--bandwidth", type=parse_bandwidth, help="Target bandwidth, e.g., 50M"
     )
-    tcp_cli.add_argument(
-        "--time", type=int, default=10, help="Test duration in seconds"
-    )
     tcp_cli.add_argument("address", metavar="ADDRESS", help="Server address to connect")
     tcp_cli.add_argument(
         "--set-mss", dest="set_mss", type=int, help="TCP: set TCP_MAXSEG (approx MSS)"
+    )
+
+    # Time and interactive mode are mutually exclusive
+    tcp_time_group = tcp_cli.add_mutually_exclusive_group()
+    tcp_time_group.add_argument(
+        "--time", type=int, default=10, help="Test duration in seconds"
+    )
+    tcp_time_group.add_argument(
+        "--interactive", action="store_true", help="Run client in interactive mode"
+    )
+
+    tcp_cli.add_argument(
+        "--interval", type=float, default=1.0, help="Stats interval (interactive mode)"
     )
 
     udp_parser = subp.add_parser("udp", help="UDP mode")
@@ -75,15 +86,25 @@ def main():
     )
 
     udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")
-    udp_cli.add_argument(
-        "--time", type=int, default=10, help="Test duration in seconds"
-    )
     udp_cli.add_argument("address", metavar="ADDRESS", help="Server address to connect")
     udp_cli.add_argument(
         "--bandwidth", type=parse_bandwidth, help="Target bandwidth, e.g., 50M"
     )
     udp_cli.add_argument(
         "-l", dest="length", type=int, default=1200, help="UDP payload length"
+    )
+
+    # Time and interactive mode are mutually exclusive
+    udp_time_group = udp_cli.add_mutually_exclusive_group()
+    udp_time_group.add_argument(
+        "--time", type=int, default=10, help="Test duration in seconds"
+    )
+    udp_time_group.add_argument(
+        "--interactive", action="store_true", help="Run client in interactive mode"
+    )
+
+    udp_cli.add_argument(
+        "--interval", type=float, default=1.0, help="Stats interval (interactive mode)"
     )
 
     args = p.parse_args()
@@ -96,22 +117,52 @@ def main():
 
     log = Logger(args.json_log, args.protocol, args.role)
 
+    controller = None
     if args.protocol == "udp":
         if args.role == "server":
             udp.server(log, args.address, args.port)
         else:
-            bw = args.bandwidth or 1e9
-            udp.client(log, args.address, args.port, args.time, bw, args.length)
+            bw = (
+                args.bandwidth or parse_bandwidth("50M")
+                if args.interactive
+                else (args.bandwidth or 1e9)
+            )
+            if args.interactive:
+                controller = InteractiveController(bw, args.length, args.interval)
+            # Use infinite duration for interactive mode, otherwise use specified time
+            duration = None if args.interactive else args.time
+            udp.client(
+                log,
+                args.address,
+                args.port,
+                duration,
+                bw,
+                args.length,
+                controller,
+            )
+
     else:
         if args.role == "server":
             tcp.server(log, args.address, args.port, args.congestion_control)
         else:
+            if args.interactive:
+                quantum = args.set_mss if args.set_mss else 1200
+                # If no bandwidth provided, controller will act as unlimited until adjusted
+                controller = InteractiveController(
+                    args.bandwidth, quantum, args.interval
+                )
+            # Use infinite duration for interactive mode, otherwise use specified time
+            duration = None if args.interactive else args.time
             tcp.client(
                 log,
                 args.address,
                 args.port,
                 args.congestion_control,
-                args.time,
+                duration,
                 args.set_mss,
                 args.bandwidth,
+                controller,
             )
+
+    if controller is not None:
+        controller.join()
