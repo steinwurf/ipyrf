@@ -26,7 +26,7 @@ def server(
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((bind_addr, port))
     srv.listen(1)
-
+    print("OKAWERFOKAWE")
     log.start(bind_addr, port)
 
     conn, addr = srv.accept()

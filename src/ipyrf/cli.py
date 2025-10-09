@@ -25,6 +25,7 @@ def main():
         action="store_true",
         default=False,
     )
+    common.add_argument("--interval", type=float, default=1.0, help="Stats interval")
 
     subp = p.add_subparsers(dest="protocol", required=True)
 
@@ -74,8 +75,6 @@ def main():
         "--interactive", action="store_true", help="Run client in interactive mode"
     )
 
-    tcp_cli.add_argument("--interval", type=float, default=1.0, help="Stats interval")
-
     udp_parser = subp.add_parser("udp", help="UDP mode")
     udp_sub = udp_parser.add_subparsers(dest="role", required=True)
 
@@ -102,19 +101,12 @@ def main():
         "--interactive", action="store_true", help="Run client in interactive mode"
     )
 
-    udp_cli.add_argument(
-        "--interval", type=float, default=1.0, help="Stats interval (interactive mode)"
-    )
-
     args = p.parse_args()
 
     if args.role not in ("server", "client"):
         raise ValueError(f"Invalid role: {args.role}. Must be 'server' or 'client'.")
 
-    if args.logfile:
-        sys.stdout = open(args.logfile, "w", buffering=1)
-
-    log = Logger(args.json_log, args.protocol, args.role)
+    log = Logger(args.json_log, args.protocol, args.role, args.logfile)
 
     controller = None
     if args.protocol == "udp":

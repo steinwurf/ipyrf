@@ -11,13 +11,16 @@ log_modes = ["tcp", "udp"]
 
 
 class Logger:
-    def __init__(self, json_log: bool, mode: str, role: str):
+    def __init__(
+        self, json_log: bool, mode: str, role: str, logfile: str | None = None
+    ):
         self.json_log = json_log
         assert mode in log_modes
         self.mode = mode
         self.direction = "tx" if role == "client" else "rx"
         assert self.direction in log_directions
         self.test_start_time = None
+        self.logfile = logfile
 
     def start(self, ip: str, port: int):
         self._log(
@@ -55,19 +58,28 @@ class Logger:
     def summary(self, **obj):
         self._log(log_type="summary", **obj)
 
+    def write(self, message: str):
+        if self.logfile:
+            with open(self.logfile, "a", buffering=1) as f:
+                f.write(message + "\n")
+        else:
+            print(message)
+            sys.stdout.flush()
+
     def _log(self, log_type, **obj):
         if self.json_log:
             obj["type"] = log_type
             obj["mode"] = self.mode
             obj["direction"] = self.direction
-            sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
-            sys.stdout.flush()
+            self.write(json.dumps(obj, separators=(",", ":")) + "\n")
             return
         assert log_type in log_types
         if log_type == "start":
-            print(f"▶ {self.mode.upper()} {self.direction.upper()} — {obj['address']}")
+            self.write(
+                f"▶ {self.mode.upper()} {self.direction.upper()} — {obj['address']}"
+            )
         elif log_type == "test":
-            print(f"▶ TEST peer={obj['peer']}  ts={obj['ts']}")
+            self.write(f"▶ TEST peer={obj['peer']}  ts={obj['ts']}")
         elif log_type == "update":
             message = (
                 f"⏱ {obj['start']:.2f}-{obj['end']:.2f} sec"
@@ -81,9 +93,9 @@ class Logger:
                 message += f" | {obj['lost_packets']}/{obj['packets']} lost ({obj['lost_percent']:.1f}%)"
             elif "packets" in obj:
                 message += f" | {obj['packets']} pkts"
-            print(message)
+            self.write(message)
         elif log_type == "summary":
-            print(
+            self.write(
                 "\n━ SUMMARY ━\n"
                 f"  {self.mode.upper()} {self.direction.upper()}\n"
                 f"  {obj.get('sender', '')} → {obj.get('receiver', '')}\n"

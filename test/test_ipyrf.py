@@ -42,7 +42,7 @@ def test_ipyrf_run_failed(ipyrf):
 
 
 def test_ipyrf_fail_check(ipyrf, free_port_func):
-
+    log.info(f"Environment: {os.environ}")
     process_monitor = dummynet.ProcessMonitor(log=log)
     sudo = os.getuid() != 0
     log.info(f"sudo: {sudo}")
@@ -50,30 +50,31 @@ def test_ipyrf_fail_check(ipyrf, free_port_func):
     net = dummynet.DummyNet(shell=shell)
 
     try:
-        demo0 = net.netns_add("demo0")
-        demo1 = net.netns_add("demo1")
-        net.link_veth_add(p1_name="demo0-eth0", p2_name="demo1-eth0")
+        d0 = net.netns_add("d0")
+        d1 = net.netns_add("d1")
+        net.link_veth_add(p1_name="d0-eth0", p2_name="d1-eth0")
 
-        net.link_set(namespace="demo0", interface="demo0-eth0")
-        net.link_set(namespace="demo1", interface="demo1-eth0")
+        net.link_set(namespace="d0", interface="d0-eth0")
+        net.link_set(namespace="d1", interface="d1-eth0")
 
-        demo0.addr_add(ip="10.0.0.1/24", interface="demo0-eth0")
-        demo1.addr_add(ip="10.0.0.2/24", interface="demo1-eth0")
+        d0.addr_add(ip="10.0.0.1/24", interface="d0-eth0")
+        d1.addr_add(ip="10.0.0.2/24", interface="d1-eth0")
 
-        demo0.up(interface="demo0-eth0")
-        demo1.up(interface="demo1-eth0")
-        demo0.up(interface="lo")
-        demo1.up(interface="lo")
+        d0.up(interface="d0-eth0")
+        d1.up(interface="d1-eth0")
+        d0.up(interface="lo")
+        d1.up(interface="lo")
 
         # Let's add some losses
-        demo0.tc(loss=5, delay=20, interface="demo0-eth0", limit=650535)
-        demo1.tc(loss=5, delay=20, interface="demo1-eth0", limit=650535)
+        d0.tc(loss=5, delay=20, interface="d0-eth0", limit=650535)
+        d1.tc(loss=5, delay=20, interface="d1-eth0", limit=650535)
 
         test_duration = 5
-        port = free_port_func(demo1)
-        ipyrf_server = ipyrf.build(demo1)
+        port = free_port_func(d1)
+
+        ipyrf_server = ipyrf.build(d1)
         ipyrf_server.run_udp_server("0.0.0.0", port)
-        ipyrf_client = ipyrf.build(demo0)
+        ipyrf_client = ipyrf.build(d0)
         ipyrf_client.run_udp_client(
             "10.0.0.2", port, duration=test_duration, bandwidth="50M"
         )
@@ -97,20 +98,20 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
     net = dummynet.DummyNet(shell=shell)
 
     try:
-        demo0 = net.netns_add("demo0")
-        demo1 = net.netns_add("demo1")
-        net.link_veth_add(p1_name="demo0-eth0", p2_name="demo1-eth0")
+        d0 = net.netns_add("d0")
+        d1 = net.netns_add("d1")
+        net.link_veth_add(p1_name="d0-eth0", p2_name="d1-eth0")
 
-        net.link_set(namespace="demo0", interface="demo0-eth0")
-        net.link_set(namespace="demo1", interface="demo1-eth0")
+        net.link_set(namespace="d0", interface="d0-eth0")
+        net.link_set(namespace="d1", interface="d1-eth0")
 
-        demo0.addr_add(ip="10.0.0.1/24", interface="demo0-eth0")
-        demo1.addr_add(ip="10.0.0.2/24", interface="demo1-eth0")
+        d0.addr_add(ip="10.0.0.1/24", interface="d0-eth0")
+        d1.addr_add(ip="10.0.0.2/24", interface="d1-eth0")
 
-        demo0.up(interface="demo0-eth0")
-        demo1.up(interface="demo1-eth0")
-        demo0.up(interface="lo")
-        demo1.up(interface="lo")
+        d0.up(interface="d0-eth0")
+        d1.up(interface="d1-eth0")
+        d0.up(interface="lo")
+        d1.up(interface="lo")
 
         test_duration = 5
         delay = 50
@@ -120,13 +121,13 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
         # We set a limit regardless to but set it very high, this is to
         # take in the overhead of tc itself
         rate = 1000  # Mbit/s
-        demo0.tc(rate=rate, delay=delay, limit=limit, interface="demo0-eth0")
-        demo1.tc(rate=rate, delay=delay, limit=limit, interface="demo1-eth0")
+        d0.tc(rate=rate, delay=delay, limit=limit, interface="d0-eth0")
+        d1.tc(rate=rate, delay=delay, limit=limit, interface="d1-eth0")
 
-        port = free_port_func(demo1)
-        ipyrf_server = ipyrf.build(demo1)
+        port = free_port_func(d1)
+        ipyrf_server = ipyrf.build(d1)
         ipyrf_server.run_tcp_server("0.0.0.0", port)
-        ipyrf_client = ipyrf.build(demo0)
+        ipyrf_client = ipyrf.build(d0)
         ipyrf_client.run_tcp_client("10.0.0.2", port, duration=test_duration)
         summary = ipyrf_client.wait_for_summary(timeout=test_duration + 5)
 
@@ -139,13 +140,13 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
         log.info(f"Testing with rate limiting to {rate} Mbit/s")
 
         # Let's rate limit the interfaces
-        demo0.tc(rate=rate, delay=delay, limit=limit, interface="demo0-eth0")
-        demo1.tc(rate=rate, delay=delay, limit=limit, interface="demo1-eth0")
+        d0.tc(rate=rate, delay=delay, limit=limit, interface="d0-eth0")
+        d1.tc(rate=rate, delay=delay, limit=limit, interface="d1-eth0")
 
-        port = free_port_func(demo1)
-        ipyrf_server = ipyrf.build(demo1)
+        port = free_port_func(d1)
+        ipyrf_server = ipyrf.build(d1)
         ipyrf_server.run_tcp_server("0.0.0.0", port)
-        ipyrf_client = ipyrf.build(demo0)
+        ipyrf_client = ipyrf.build(d0)
         ipyrf_client.run_tcp_client("10.0.0.2", port, duration=test_duration)
         summary = ipyrf_client.wait_for_summary(timeout=test_duration + 5)
 

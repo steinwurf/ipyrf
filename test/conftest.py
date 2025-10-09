@@ -103,8 +103,7 @@ class IPyrfClient:
         args += ["--logfile", self.log_file_path]
         args += ["--json_log"]  # log in json format
 
-        # join the args into a shell string
-        cmd = f"{sys.executable} ipyrf {" ".join(args)}"
+        cmd = f"{sys.executable} -m ipyrf {' '.join(args)}"
         log.info(f"Running: {cmd}")
         self.process = self.shell.run_async(cmd)
 

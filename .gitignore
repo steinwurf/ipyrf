@@ -26,4 +26,11 @@ ENV/
 .coverage*
 htmlcov/
 
+# virtualenv
+.venv/
+venv-test-*/
 
+# waf
+build/
+*.lock-waf*
+.waf3-*
