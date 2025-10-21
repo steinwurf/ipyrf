@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipyrf"
-version = "1.0.1"
+version = "1.1.0"
 description = "A tiny iperf3-like tool with JSON output (TCP/UDP)"
 readme = "README.rst"
 requires-python = ">=3.8"
