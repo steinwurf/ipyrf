@@ -38,6 +38,42 @@ For development, install with test dependencies:
 
    python3 -m pip install -e ".[test]"
 
+Test Utilities (ipyrf.test)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``ipyrf.test`` module provides test utilities for writing your own tests:
+
+.. code-block:: python
+
+   from ipyrf.test import IPyrfBuilder, CheckCriteria, pick_free_port
+
+   def test_my_network(testdirectory):
+       builder = IPyrfBuilder(testdirectory)
+       port = pick_free_port()
+
+       server = builder.build()
+       client = builder.build()
+
+       server.run_tcp_server("127.0.0.1", port)
+       client.run_tcp_client("127.0.0.1", port, duration=2)
+
+       # Check with custom criteria
+       builder.check(
+           (server, client),
+           timeout=5,
+           criteria={"min_bps": 1000000}
+       )
+
+Available classes and functions:
+
+- ``IPyrfClient``: Run and monitor ipyrf instances
+- ``IPyrfBuilder``: Builder pattern for creating test instances
+- ``CheckCriteria``: Configurable criteria for evaluating test results
+- ``pick_free_port()``: Find an available port
+- ``wait_for_condition()``: Helper for waiting on conditions
+
+See ``examples/using_test_utilities.py`` for more examples.
+
 Running Tests
 ~~~~~~~~~~~~~
 
