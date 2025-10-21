@@ -8,7 +8,7 @@ import os.path
 from waflib.Build import BuildContext
 
 APPNAME = "ipyrf"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 def options(opt):
