@@ -21,6 +21,15 @@ def options(opt):
     )
 
 
+def prepare_release(ctx):
+    """Prepare a release."""
+    # Rewrite versions
+    with ctx.rewrite_file(filename="pyproject.toml") as f:
+        pattern = r"version = \".+\""
+        replacement = 'version = "{}"'.format(VERSION)
+        f.regex_replace(pattern=pattern, replacement=replacement)
+
+
 class TestContext(BuildContext):
     cmd = "test"
     fun = "test"
