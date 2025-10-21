@@ -1,18 +1,14 @@
 #! /usr/bin/env python
 # encoding: utf-8
 
-import shutil
 import os
-import waflib
 import hashlib
 import os.path
-import tempfile
-import platform
 
 from waflib.Build import BuildContext
 
-APPNAME = "plumr"
-VERSION = "36.0.0"
+APPNAME = "ipyrf"
+VERSION = "1.0.0"
 
 
 def options(opt):
