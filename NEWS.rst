@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+1.1.1
+-----
 * Patch: Removed debug print.
 
 1.1.0
