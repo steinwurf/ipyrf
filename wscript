@@ -30,27 +30,19 @@ def prepare_release(ctx):
         f.regex_replace(pattern=pattern, replacement=replacement)
 
 
-class TestContext(BuildContext):
-    cmd = "test"
-    fun = "test"
-
-
 def build(ctx):
-    pass
+    if ctx.options.run_tests:
+        pip_install, venv = _create_venv(ctx=ctx, location="test")
 
+        if pip_install:
+            venv.run("python -m pip install -e .")
 
-def test(ctx):
-    pip_install, venv = _create_venv(ctx=ctx, location="test")
+        cmd_options = ""
 
-    if pip_install:
-        venv.run("python -m pip install -e .")
+        if ctx.options.filter:
+            cmd_options += f"-k '{ctx.options.filter}'"
 
-    cmd_options = ""
-
-    if ctx.options.filter:
-        cmd_options += f"-k '{ctx.options.filter}'"
-
-    venv.run(f"pytest -x {cmd_options} test")
+        venv.run(f"pytest -x {cmd_options} test")
 
 
 def _create_venv(ctx, location):
