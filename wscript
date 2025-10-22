@@ -5,8 +5,6 @@ import os
 import hashlib
 import os.path
 
-from waflib.Build import BuildContext
-
 APPNAME = "ipyrf"
 VERSION = "1.1.0"
 
