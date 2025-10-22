@@ -5,14 +5,14 @@ This example demonstrates how to use the ipyrf.test module to create
 custom tests for network performance.
 """
 
-from ipyrf.test import IPyrfBuilder, CheckCriteria, pick_free_port
+from ipyrf.test import IPyrfBuilder, CheckCriteria
 
 
 # Example 1: Using the utilities directly in a test
 def test_custom_tcp_test(testdirectory):
     """Example of a custom TCP test using ipyrf.test utilities."""
     builder = IPyrfBuilder(testdirectory)
-    port = pick_free_port()
+    port = 12345
 
     # Create server and client
     server = builder.build()
@@ -37,7 +37,7 @@ def test_custom_tcp_test(testdirectory):
 def test_with_detailed_info(testdirectory):
     """Example showing how to get detailed test results."""
     builder = IPyrfBuilder(testdirectory)
-    port = pick_free_port()
+    port = 12345
 
     server = builder.build()
     client = builder.build()
@@ -67,7 +67,7 @@ def test_with_detailed_info(testdirectory):
 def test_with_custom_criteria(testdirectory):
     """Example of using CheckCriteria directly for custom validation."""
     builder = IPyrfBuilder(testdirectory)
-    port = pick_free_port()
+    port = 12345
 
     server = builder.build()
     client = builder.build()
