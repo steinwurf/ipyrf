@@ -8,11 +8,18 @@ import os.path
 from waflib.Build import BuildContext
 
 APPNAME = "ipyrf"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 
 def options(opt):
     opts = opt.add_option_group("Test")
+    opts.add_option(
+        "--run_tests",
+        action="store_true",
+        default=False,
+        dest="run_tests",
+        help="Run the test suite.",
+    )
     opts.add_option(
         "--filter",
         default=None,
