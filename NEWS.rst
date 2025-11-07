@@ -6,7 +6,9 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Minor: Replaced TokenBucket with a Pacer/LeakyBucket implementation.
+* Minor: Improved log output
+* Patch: Fixed UDP loss calculation.
 
 1.1.1
 -----

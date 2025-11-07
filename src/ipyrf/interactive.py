@@ -9,18 +9,8 @@ import fcntl
 import select
 
 from .utils import human_bps
-from .token_bucket import TokenBucket
+from .pacer import Pacer
 from .controllers import BasePacingController
-
-
-class DynamicTokenBucket(TokenBucket):
-    """Token bucket that allows updating the target rate at runtime."""
-
-    def set_rate_bps(self, new_rate_bps: float, quantum_bytes: int):
-        # Convert bits/sec -> bytes/sec as used internally by TokenBucket
-        self.rate_bps = max(1e-6, new_rate_bps / 8.0)
-        self.capacity = max(quantum_bytes * 2, int(self.rate_bps))
-        self.tokens = min(self.tokens, self.capacity)
 
 
 class KeyReader:
@@ -116,20 +106,15 @@ class KeyReader:
 
 
 class InteractiveController(BasePacingController):
-    def __init__(
-        self, initial_bps: float | None, quantum_bytes: int, interval: float = 1.0
-    ):
+    def __init__(self, initial_bps: float | None, interval: float = 1.0):
         super().__init__(interval_seconds=interval)
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
-        self.quantum = quantum_bytes
         self.pacing = initial_bps is not None
         self.target_bps = (
             float(initial_bps) if initial_bps is not None else float("inf")
         )
-        self.tb: DynamicTokenBucket | None = (
-            DynamicTokenBucket(self.target_bps, self.quantum) if self.pacing else None
-        )
+        self.tb: Pacer | None = Pacer(self.target_bps) if self.pacing else None
         self.keyloop_thread = start_interactive_keys(self, initial_bps)
 
     def is_pacing(self) -> bool:
@@ -142,11 +127,16 @@ class InteractiveController(BasePacingController):
             tb = self.tb
         if tb is None:
             return
-        while True:
-            sleep_time = tb.take(n_bytes)
-            if sleep_time <= 0:
-                break
-            time.sleep(sleep_time)
+        sleep_time = tb.take(n_bytes)
+        if sleep_time <= 0:
+            return
+        if sleep_time > 0.5:
+            self.stop_event.wait(sleep_time)
+        else:
+            # Busy wait for very short sleeps
+            end = time.perf_counter() + sleep_time
+            while time.perf_counter() < end and not self.stop_event.is_set():
+                pass
 
     def get_update_fields(self):
         with self.lock:
@@ -170,9 +160,9 @@ class InteractiveController(BasePacingController):
                 self.target_bps = float(initial_bps)
                 self.pacing = True
                 if self.tb is None:
-                    self.tb = DynamicTokenBucket(self.target_bps, self.quantum)
+                    self.tb = Pacer(self.target_bps)
                 else:
-                    self.tb.set_rate_bps(self.target_bps, self.quantum)
+                    self.tb.set_rate_bps(self.target_bps)
 
     def unlimited(self):
         with self.lock:
@@ -187,18 +177,20 @@ class InteractiveController(BasePacingController):
                 if not (self.target_bps != float("inf")):
                     self.target_bps = 50e6
                 if self.tb is None:
-                    self.tb = DynamicTokenBucket(self.target_bps, self.quantum)
+                    self.tb = Pacer(self.target_bps)
             if scale != 1.0:
                 self.target_bps = max(1e3, self.target_bps * scale)
             else:
                 self.target_bps = max(1e3, self.target_bps + delta_bps)
-            self.tb.set_rate_bps(self.target_bps, self.quantum)
+            self.tb.set_rate_bps(self.target_bps)
             return self.target_bps
 
     def request_stop(self):
         self.stop_event.set()
 
     def stop(self):
+        if not self.stop_event.is_set():
+            self.stop_event.set()
         if self.keyloop_thread is not None:
             self.keyloop_thread.join()
             self.keyloop_thread = None

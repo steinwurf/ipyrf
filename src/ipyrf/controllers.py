@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 from typing import Dict, Optional
 
-from .token_bucket import TokenBucket
+from .pacer import Pacer
 
 
 class BasePacingController:
@@ -35,7 +35,6 @@ class StaticPacingController(BasePacingController):
     def __init__(
         self,
         bandwidth_bps: Optional[float],
-        quantum_bytes: int,
         duration_seconds: float,
         interval_seconds: float,
     ):
@@ -43,9 +42,9 @@ class StaticPacingController(BasePacingController):
         self.bandwidth_bps = bandwidth_bps
         self.duration_seconds = duration_seconds
         self.start_time = None
-        self.tb: Optional[TokenBucket] = None
+        self.tb: Optional[Pacer] = None
         if bandwidth_bps is not None:
-            self.tb = TokenBucket(bandwidth_bps, quantum_bytes)
+            self.tb = Pacer(bandwidth_bps)
 
     def is_pacing(self) -> bool:
         return self.tb is not None
@@ -53,11 +52,16 @@ class StaticPacingController(BasePacingController):
     def maybe_sleep(self, n_bytes: int):
         if self.tb is None:
             return
-        while True:
-            sleep_time = self.tb.take(n_bytes)
-            if sleep_time <= 0:
-                break
+        sleep_time = self.tb.take(n_bytes)
+        if sleep_time <= 0:
+            return
+        if sleep_time > 0.5:
             time.sleep(sleep_time)
+        else:
+            # Busy wait for very short sleeps
+            end = time.perf_counter() + sleep_time
+            while time.perf_counter() < end:
+                pass
 
     def get_update_fields(self) -> Dict[str, float]:
         if self.bandwidth_bps is None:

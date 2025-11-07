@@ -82,8 +82,9 @@ class Logger:
             self.write(f"▶ TEST peer={obj['peer']}  ts={obj['ts']}")
         elif log_type == "update":
             message = (
-                f"⏱ {obj['start']:.2f}-{obj['end']:.2f} sec"
+                f"⏱ {obj['start']:.1f} → {obj['end']:.1f}"
                 f" | {human_readable_bytes(obj['bytes'])}"
+                f" | {(obj['end']-obj['start']):.2f} sec"
             )
             if "target_bandwidth_bps" in obj:
                 message += f" | {obj['bits_per_second'] / 1e6:.2f}/{obj['target_bandwidth_bps'] / 1e6:.2f} Mbps"
@@ -101,6 +102,10 @@ class Logger:
                 f"  {obj.get('sender', '')} → {obj.get('receiver', '')}\n"
                 f"  duration : {obj['seconds']:.2f} sec\n"
                 f"  data     : {human_readable_bytes(obj['bytes'])}\n"
-                f"  rate     : {obj['bits_per_second'] / 1e6:.2f} Mbps\n"
-                f"  reason   : {obj.get('stop_reason', '')}\n"
+                f"  rate     : {obj['bits_per_second'] / 1e6:.2f} Mbps"
             )
+            if "lost_packets" in obj and "packets" in obj:
+                self.write(
+                    f"  packets  : {obj['lost_packets']}/{obj['packets']} lost ({obj['lost_percent']:.1f}%)"
+                )
+            self.write(f"  reason   : {obj.get('stop_reason', '')}\n")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import argparse
-import sys
 
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
@@ -59,7 +58,9 @@ def main():
         "client", parents=[common, common_tcp], help="Run a TCP client"
     )
     tcp_cli.add_argument(
-        "--bandwidth", type=parse_bandwidth, help="Target bandwidth, e.g., 50M"
+        "--bandwidth",
+        type=parse_bandwidth,
+        help="Target bandwidth in bits per second, e.g., 50M",
     )
     tcp_cli.add_argument("address", metavar="ADDRESS", help="Server address to connect")
     tcp_cli.add_argument(
@@ -116,14 +117,12 @@ def main():
             bw = (
                 args.bandwidth or parse_bandwidth("50M")
                 if args.interactive
-                else (args.bandwidth or 1e9)
+                else args.bandwidth
             )
             if args.interactive:
-                controller = InteractiveController(bw, args.length, args.interval)
+                controller = InteractiveController(bw, args.interval)
             else:
-                controller = StaticPacingController(
-                    bw, max(args.length, udp.UDP_HDR.size), args.time, args.interval
-                )
+                controller = StaticPacingController(bw, args.time, args.interval)
             udp.client(
                 log,
                 args.address,
@@ -139,15 +138,11 @@ def main():
             )
         else:
             if args.interactive:
-                quantum = args.set_mss if args.set_mss else 1200
                 # If no bandwidth provided, controller will act as unlimited until adjusted
-                controller = InteractiveController(
-                    args.bandwidth, quantum, args.interval
-                )
+                controller = InteractiveController(args.bandwidth, args.interval)
             else:
                 controller = StaticPacingController(
                     args.bandwidth,
-                    args.set_mss if args.set_mss else 1200,
                     args.time,
                     args.interval,
                 )

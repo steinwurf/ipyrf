@@ -22,7 +22,7 @@ def server(log: Logger, bind_addr: str, port: int, interval_seconds: float):
     start = 0.0
     last_bytes = 0
     last_pkts = 0
-    last_seq_seen_last = -1
+    last_seq_seen_last = 0
     last_seq_seen = -1
     bytes_received = 0
     total_pkts = 0
@@ -64,8 +64,6 @@ def server(log: Logger, bind_addr: str, port: int, interval_seconds: float):
         bytes_received += len(data)
 
         last_seq_seen = max(last_seq_seen, seq)
-        if last_seq_seen_last == -1:
-            last_seq_seen_last = last_seq_seen
 
         if (now - last_ts) >= interval_seconds:
             sent_packets = last_seq_seen - last_seq_seen_last
@@ -87,8 +85,8 @@ def server(log: Logger, bind_addr: str, port: int, interval_seconds: float):
 
     end = time.time()
     dur = max(1e-9, end - start) if active else 0.0
-    lost = max(0, last_seq_seen + 1 - total_pkts) if last_seq_seen >= 0 else 0
-    loss_pct = (100.0 * lost / max(1, last_seq_seen + 1)) if last_seq_seen >= 0 else 0.0
+    lost = last_seq_seen - total_pkts if last_seq_seen > 0 else 0
+    loss_pct = 100.0 * lost / last_seq_seen if last_seq_seen > 0 else 0.0
     log.summary(
         receiver=f"{bind_addr}:{port}",
         sender=None if not src_peer else f"{src_peer[0]}:{src_peer[1]}",
@@ -121,7 +119,7 @@ def client(
     last_ts = start
     last_bytes = 0
     last_pkts = 0
-    seq = 0
+    seq = 1
     bytes_sent = 0
     pkts_sent = 0
 
