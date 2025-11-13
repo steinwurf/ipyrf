@@ -66,6 +66,11 @@ def main():
     tcp_cli.add_argument(
         "--set-mss", dest="set_mss", type=int, help="TCP: set TCP_MAXSEG (approx MSS)"
     )
+    tcp_cli.add_argument(
+        "--enable-latency",
+        action="store_true",
+        help="Enable latency tracking on the server",
+    )
 
     # Time and interactive mode are mutually exclusive
     tcp_time_group = tcp_cli.add_mutually_exclusive_group()
@@ -91,6 +96,11 @@ def main():
     )
     udp_cli.add_argument(
         "-l", dest="length", type=int, default=1200, help="UDP payload length"
+    )
+    udp_cli.add_argument(
+        "--enable-latency",
+        action="store_true",
+        help="Enable latency tracking on the server",
     )
 
     # Time and interactive mode are mutually exclusive
@@ -129,12 +139,17 @@ def main():
                 args.port,
                 args.length,
                 controller,
+                args.enable_latency,
             )
 
     else:
         if args.role == "server":
             tcp.server(
-                log, args.address, args.port, args.interval, args.congestion_control
+                log,
+                args.address,
+                args.port,
+                args.interval,
+                args.congestion_control,
             )
         else:
             if args.interactive:
@@ -153,6 +168,7 @@ def main():
                 args.congestion_control,
                 args.set_mss,
                 controller,
+                args.enable_latency,
             )
 
     if controller is not None:
