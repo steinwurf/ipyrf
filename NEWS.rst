@@ -6,7 +6,7 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Patch: Changed latency calculation to use milliseconds instead of seconds.
 
 1.4.0
 -----
