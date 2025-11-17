@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+1.3.0
+-----
 * Minor: Added latency tracking feature. Clients can enable latency measurement
   with --enable-latency flag. Servers automatically detect client preference
   and calculate latency statistics (min, max, average) when enabled. Works for
