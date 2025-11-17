@@ -94,6 +94,11 @@ class Logger:
                 message += f" | {obj['lost_packets']}/{obj['packets']} lost ({obj['lost_percent']:.1f}%)"
             elif "packets" in obj:
                 message += f" | {obj['packets']} pkts"
+            if "latency_avg" in obj:
+                message += f" | {obj['latency_avg']*1000:.2f}"
+                if "latency_min" in obj and "latency_max" in obj:
+                    message += f" ({obj['latency_min']*1000:.2f}-{obj['latency_max']*1000:.2f})"
+                message += f" ms"
             self.write(message)
         elif log_type == "summary":
             self.write(
@@ -108,4 +113,9 @@ class Logger:
                 self.write(
                     f"  packets  : {obj['lost_packets']}/{obj['packets']} lost ({obj['lost_percent']:.1f}%)"
                 )
+            if "latency_avg" in obj:
+                latency_line = f"  latency  : {obj['latency_avg']*1000:.2f} ms avg"
+                if "latency_min" in obj and "latency_max" in obj:
+                    latency_line += f" (min: {obj['latency_min']*1000:.2f} ms, max: {obj['latency_max']*1000:.2f} ms)"
+                self.write(latency_line)
             self.write(f"  reason   : {obj.get('stop_reason', '')}\n")
