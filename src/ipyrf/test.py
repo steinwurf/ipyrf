@@ -105,7 +105,9 @@ class IPyrfClient:
         args = ["tcp", "server", address, "--port", str(port)]
         self.__run(args)
 
-    def run_udp_client(self, address, port, duration, bandwidth, length=None):
+    def run_udp_client(
+        self, address, port, duration, bandwidth, enable_latency=True, length=None
+    ):
         """
         Run ipyrf as a UDP client.
 
@@ -114,6 +116,7 @@ class IPyrfClient:
             port: Server port number.
             duration: Test duration in seconds.
             bandwidth: Target bandwidth (e.g., "10M" for 10 Mbps).
+            enable_latency: Whether to enable latency measurements.
             length: Optional packet length.
         """
         args = [
@@ -127,11 +130,21 @@ class IPyrfClient:
             "--bandwidth",
             str(bandwidth),
         ]
+        if enable_latency:
+            args += ["--enable-latency"]
         if length is not None:
             args += ["-l", str(length)]
         self.__run(args)
 
-    def run_tcp_client(self, address, port, duration, bandwidth=None, TCP_MAXSEG=None):
+    def run_tcp_client(
+        self,
+        address,
+        port,
+        duration,
+        enable_latency=True,
+        bandwidth=None,
+        TCP_MAXSEG=None,
+    ):
         """
         Run ipyrf as a TCP client.
 
@@ -139,6 +152,7 @@ class IPyrfClient:
             address: Server IP address.
             port: Server port number.
             duration: Test duration in seconds.
+            enable_latency: Whether to enable latency measurements.
             bandwidth: Optional target bandwidth (e.g., "10M" for
                        10 Mbps).
             TCP_MAXSEG: Optional TCP maximum segment size.
@@ -152,10 +166,12 @@ class IPyrfClient:
             "--time",
             str(duration),
         ]
-        if TCP_MAXSEG is not None:
-            args += ["--set-mss", str(TCP_MAXSEG)]
+        if enable_latency:
+            args += ["--enable-latency"]
         if bandwidth is not None:
             args += ["--bandwidth", str(bandwidth)]
+        if TCP_MAXSEG is not None:
+            args += ["--set-mss", str(TCP_MAXSEG)]
         self.__run(args)
 
     def __run(self, args):
