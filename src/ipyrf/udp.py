@@ -44,8 +44,6 @@ def server(
     interval_latency_count = 0
     interval_latency_min = float("inf")
     interval_latency_max = 0.0
-    # Max latency cap: 1 second (reasonable for same-machine scenarios)
-    max_latency_cap = 1.0
 
     log.start(bind_addr, port)
 
@@ -90,18 +88,17 @@ def server(
 
         # Calculate latency if enabled by client and we have a valid timestamp
         if latency_enabled and timestamp_ns > 0:
-            timestamp_s = timestamp_ns / 1e9
-            latency = now - timestamp_s
-            # Only include if latency is within the max cap
-            if latency >= 0 and latency <= max_latency_cap:
-                latency_sum += latency
-                latency_count += 1
-                latency_min = min(latency_min, latency)
-                latency_max = max(latency_max, latency)
-                interval_latency_sum += latency
-                interval_latency_count += 1
-                interval_latency_min = min(interval_latency_min, latency)
-                interval_latency_max = max(interval_latency_max, latency)
+            latency_ns = time.time_ns() - timestamp_ns
+            latency_ms = latency_ns / 1e6
+
+            latency_sum += latency_ms
+            latency_count += 1
+            latency_min = min(latency_min, latency_ms)
+            latency_max = max(latency_max, latency_ms)
+            interval_latency_sum += latency_ms
+            interval_latency_count += 1
+            interval_latency_min = min(interval_latency_min, latency_ms)
+            interval_latency_max = max(interval_latency_max, latency_ms)
 
         if (now - last_ts) >= interval_seconds:
             sent_packets = last_seq_seen - last_seq_seen_last
