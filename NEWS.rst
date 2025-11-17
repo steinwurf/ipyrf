@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+1.4.0
+-----
 * Minor: Updated the test component to include the latency tracking feature.
 
 1.3.0
