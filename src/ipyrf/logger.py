@@ -118,4 +118,9 @@ class Logger:
                 if "latency_min" in obj and "latency_max" in obj:
                     latency_line += f" (min: {obj['latency_min']:.2f} ms, max: {obj['latency_max']:.2f} ms)"
                 self.write(latency_line)
+            if "packet_record_count" in obj:
+                self.write(
+                    f"  pkt rec  : {obj['packet_record_count']} recorded, "
+                    f"{obj.get('packet_record_dropped', 0)} dropped"
+                )
             self.write(f"  reason   : {obj.get('stop_reason', '')}\n")

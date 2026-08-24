@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 
 from .logger import Logger
 from .controllers import BasePacingController
+from .packet_recorder import PacketRecorder
 
 
 UDP_HDR = struct.Struct("!I Q I")
@@ -18,6 +19,7 @@ def server(
     bind_addr: str,
     port: int,
     interval_seconds: float,
+    packet_record_path: Optional[str] = None,
 ):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -49,92 +51,103 @@ def server(
 
     inactivity_deadline = None
 
+    recv_buffer = bytearray(65535)
+    recorder = (
+        PacketRecorder(packet_record_path) if packet_record_path is not None else None
+    )
     stop_reason = "unknown"
-    while True:
-        try:
-            data, peer = sock.recvfrom(65535)
-        except socket.timeout:
-            if active and inactivity_deadline and time.time() > inactivity_deadline:
-                stop_reason = "inactivity"
+    try:
+        while True:
+            try:
+                n, peer = sock.recvfrom_into(recv_buffer)
+            except socket.timeout:
+                if active and inactivity_deadline and time.time() > inactivity_deadline:
+                    stop_reason = "inactivity"
+                    break
+                continue
+
+            now_ns = time.time_ns()
+            now = now_ns / 1e9
+            if not active:
+                log.test(peer[0], peer[1], now)
+                active = True
+                start = now
+                last_ts = now
+                src_peer = peer
+            inactivity_deadline = now + 2.0
+
+            if n >= UDP_HDR.size:
+                seq, timestamp_ns, flags = UDP_HDR.unpack_from(recv_buffer)
+            else:
+                seq, timestamp_ns, flags = (0, 0, 0)
+
+            # Check if client wants latency tracking enabled
+            if (flags & LATENCY_FLAG) != 0:
+                latency_enabled = True
+
+            if (flags & FIN_FLAG) != 0:
+                stop_reason = "end-of-test"
                 break
-            continue
 
-        now = time.time()
-        if not active:
-            log.test(peer[0], peer[1], now)
-            active = True
-            start = now
-            last_ts = now
-            src_peer = peer
-        inactivity_deadline = now + 2.0
+            total_pkts += 1
+            bytes_received += n
 
-        if len(data) >= UDP_HDR.size:
-            seq, timestamp_ns, flags = UDP_HDR.unpack_from(data)
-        else:
-            seq, timestamp_ns, flags = (0, 0, 0)
+            last_seq_seen = max(last_seq_seen, seq)
+            if recorder is not None:
+                recorder.add(seq, timestamp_ns, now_ns)
 
-        # Check if client wants latency tracking enabled
-        if (flags & LATENCY_FLAG) != 0:
-            latency_enabled = True
+            # Calculate latency if enabled by client and we have a valid timestamp
+            if latency_enabled and timestamp_ns > 0:
+                latency_ns = now_ns - timestamp_ns
+                latency_ms = latency_ns / 1e6
 
-        if (flags & FIN_FLAG) != 0:
-            stop_reason = "end-of-test"
-            break
+                latency_sum += latency_ms
+                latency_count += 1
+                latency_min = min(latency_min, latency_ms)
+                latency_max = max(latency_max, latency_ms)
+                interval_latency_sum += latency_ms
+                interval_latency_count += 1
+                interval_latency_min = min(interval_latency_min, latency_ms)
+                interval_latency_max = max(interval_latency_max, latency_ms)
 
-        total_pkts += 1
-        bytes_received += len(data)
+            if (now - last_ts) >= interval_seconds:
+                sent_packets = last_seq_seen - last_seq_seen_last
+                received = total_pkts - last_pkts
+                lost = max(0, sent_packets - received)
+                percentage_lost = 100.0 * lost / sent_packets if sent_packets > 0 else 0.0
 
-        last_seq_seen = max(last_seq_seen, seq)
+                update_fields = {
+                    "start_ts": last_ts,
+                    "end_ts": now,
+                    "bytes": bytes_received - last_bytes,
+                    "packets": sent_packets,
+                    "lost_packets": lost,
+                    "lost_percent": percentage_lost,
+                }
 
-        # Calculate latency if enabled by client and we have a valid timestamp
-        if latency_enabled and timestamp_ns > 0:
-            latency_ns = time.time_ns() - timestamp_ns
-            latency_ms = latency_ns / 1e6
+                # Add latency statistics if available
+                if interval_latency_count > 0:
+                    update_fields["latency_avg"] = (
+                        interval_latency_sum / interval_latency_count
+                    )
+                    update_fields["latency_min"] = interval_latency_min
+                    update_fields["latency_max"] = interval_latency_max
+                    update_fields["latency_count"] = interval_latency_count
 
-            latency_sum += latency_ms
-            latency_count += 1
-            latency_min = min(latency_min, latency_ms)
-            latency_max = max(latency_max, latency_ms)
-            interval_latency_sum += latency_ms
-            interval_latency_count += 1
-            interval_latency_min = min(interval_latency_min, latency_ms)
-            interval_latency_max = max(interval_latency_max, latency_ms)
+                log.update(**update_fields)
 
-        if (now - last_ts) >= interval_seconds:
-            sent_packets = last_seq_seen - last_seq_seen_last
-            received = total_pkts - last_pkts
-            lost = max(0, sent_packets - received)
-            percentage_lost = 100.0 * lost / sent_packets if sent_packets > 0 else 0.0
-
-            update_fields = {
-                "start_ts": last_ts,
-                "end_ts": now,
-                "bytes": bytes_received - last_bytes,
-                "packets": sent_packets,
-                "lost_packets": lost,
-                "lost_percent": percentage_lost,
-            }
-
-            # Add latency statistics if available
-            if interval_latency_count > 0:
-                update_fields["latency_avg"] = (
-                    interval_latency_sum / interval_latency_count
-                )
-                update_fields["latency_min"] = interval_latency_min
-                update_fields["latency_max"] = interval_latency_max
-                update_fields["latency_count"] = interval_latency_count
-
-            log.update(**update_fields)
-
-            last_ts = now
-            last_bytes = bytes_received
-            last_pkts = total_pkts
-            last_seq_seen_last = last_seq_seen
-            # Reset interval latency tracking
-            interval_latency_sum = 0.0
-            interval_latency_count = 0
-            interval_latency_min = float("inf")
-            interval_latency_max = 0.0
+                last_ts = now
+                last_bytes = bytes_received
+                last_pkts = total_pkts
+                last_seq_seen_last = last_seq_seen
+                # Reset interval latency tracking
+                interval_latency_sum = 0.0
+                interval_latency_count = 0
+                interval_latency_min = float("inf")
+                interval_latency_max = 0.0
+    finally:
+        if recorder is not None:
+            recorder.close()
 
     end = time.time()
     dur = max(1e-9, end - start) if active else 0.0
@@ -161,6 +174,10 @@ def server(
         summary_fields["latency_min"] = latency_min
         summary_fields["latency_max"] = latency_max
         summary_fields["latency_count"] = latency_count
+
+    if recorder is not None:
+        summary_fields["packet_record_count"] = recorder.recorded
+        summary_fields["packet_record_dropped"] = recorder.dropped
 
     log.summary(**summary_fields)
 
@@ -198,13 +215,14 @@ def client(
 
     while not controller.should_stop():
         flags = LATENCY_FLAG if enable_latency else 0
-        UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), flags)
-
+        
         if controller.is_pacing():
-            controller.maybe_sleep(len(payload))
+            controller.maybe_sleep(payload_len)
+        
         try:
             if bytes_sent == 0:
                 log.test(host, port, start)
+            UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), flags)
             n = sock.send(payload)
         except Exception as e:
             stop_reason = f"error sending packet: {e}"

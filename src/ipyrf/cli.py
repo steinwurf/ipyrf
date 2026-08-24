@@ -88,6 +88,11 @@ def main():
     udp_srv.add_argument(
         "address", metavar="ADDRESS", type=parse_ip, help="Listen address"
     )
+    udp_srv.add_argument(
+        "--packet-record",
+        metavar="PATH",
+        help="Write received UDP packet traces to a binary file",
+    )
 
     udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")
     udp_cli.add_argument("address", metavar="ADDRESS", help="Server address to connect")
@@ -122,7 +127,13 @@ def main():
     controller = None
     if args.protocol == "udp":
         if args.role == "server":
-            udp.server(log, args.address, args.port, args.interval)
+            udp.server(
+                log,
+                args.address,
+                args.port,
+                args.interval,
+                packet_record_path=args.packet_record,
+            )
         else:
             bw = (
                 args.bandwidth or parse_bandwidth("50M")

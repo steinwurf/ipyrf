@@ -9,6 +9,7 @@ Features
 - JSON or human-readable output
 - Optional bandwidth capping (TCP/UDP)
 - UDP packet loss estimation
+- Optional per-datagram UDP packet recording
 - Linux TCP congestion control selection (if available)
 
 Installation
@@ -99,6 +100,7 @@ UDP server:
 .. code-block:: bash
 
    ipyrf udp server 0.0.0.0 --port 12345
+   ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.bin
 
 UDP client (with bandwidth cap and optional payload size):
 
@@ -168,8 +170,20 @@ UDP-specific options:
 - ``--time``: Test duration (seconds), default 10
 - ``--bandwidth``: Target rate (required for UDP client; e.g., ``50M``)
 - ``-l/--length``: UDP payload length (default 1200)
+- ``--packet-record PATH``: UDP server: write received packet traces to a binary file
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
+
+UDP packet recording
+--------------------
+
+Pass ``--packet-record PATH`` to a UDP server to write one binary record per received datagram (sequence number, sender timestamp, receiver timestamp). Disk I/O is offloaded from the receive path; if recording cannot keep up, records are dropped and the counts appear in the summary.
+
+Export the trace to CSV (columns ``seq``, ``tx_ns``, ``rx_ns``, ``latency_ns``):
+
+.. code-block:: bash
+
+   python3 -m ipyrf.packet_recorder packets.bin packets.csv
 
 JSON logging
 ------------
