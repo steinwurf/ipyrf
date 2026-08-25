@@ -6,7 +6,12 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Minor: Extended BasePacingController with next_send() so custom
+  controllers can decide both when to send and how many bytes to send.
+  Static and interactive pacing keep their previous behavior.
+* Minor: Updated TCP framing to include the payload length in each
+  record so variable-sized sends work. Latency measurements still use
+  the per-record timestamp.
 
 1.5.1
 -----

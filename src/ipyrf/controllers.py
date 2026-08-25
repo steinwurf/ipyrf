@@ -6,6 +6,14 @@ from .pacer import Pacer
 
 
 class BasePacingController:
+    """Base class for client send pacing.
+
+    Subclasses can override :meth:`next_send` to decide both *when* to
+    send and *how many* bytes to send. The default implementation keeps
+    the historical behavior: sleep via :meth:`maybe_sleep` when
+    :meth:`is_pacing` is true, then send exactly ``n_bytes``.
+    """
+
     def __init__(self, interval_seconds: float = 1.0):
         self.interval_seconds = interval_seconds
 
@@ -14,6 +22,20 @@ class BasePacingController:
 
     def maybe_sleep(self, n_bytes: int):
         return
+
+    def next_send(self, n_bytes: int) -> int:
+        """Wait until ready to send, then return how many bytes to send.
+
+        Args:
+            n_bytes: Suggested/maximum payload size for this send.
+
+        Returns:
+            Number of bytes to send now. Must be ``> 0`` and ``<= n_bytes``.
+            Return ``0`` to skip this iteration without sending.
+        """
+        if self.is_pacing():
+            self.maybe_sleep(n_bytes)
+        return n_bytes
 
     def get_update_fields(self) -> Dict[str, float]:
         return {}

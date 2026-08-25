@@ -213,17 +213,24 @@ def client(
     # Start timing if the controller has a duration
     controller.start()
 
+    payload_view = memoryview(payload)
+
     while not controller.should_stop():
         flags = LATENCY_FLAG if enable_latency else 0
-        
-        if controller.is_pacing():
-            controller.maybe_sleep(payload_len)
-        
+
+        send_len = controller.next_send(payload_len)
+        if send_len <= 0:
+            continue
+        if send_len < UDP_HDR.size:
+            send_len = UDP_HDR.size
+        elif send_len > payload_len:
+            send_len = payload_len
+
         try:
             if bytes_sent == 0:
                 log.test(host, port, start)
             UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), flags)
-            n = sock.send(payload)
+            n = sock.send(payload_view[:send_len])
         except Exception as e:
             stop_reason = f"error sending packet: {e}"
             break

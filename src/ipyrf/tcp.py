@@ -8,10 +8,11 @@ from typing import Optional
 from .logger import Logger
 from .controllers import BasePacingController
 
-# TCP header: latency flag (B = 1 byte) + timestamp (Q = 8 bytes, nanoseconds)
-TCP_LATENCY_FLAG = struct.Struct("!B")
-TCP_TIMESTAMP = struct.Struct("!Q")
-TCP_HDR_SIZE = TCP_LATENCY_FLAG.size + TCP_TIMESTAMP.size
+# TCP record header: latency flag, payload length, send timestamp (ns)
+TCP_HDR = struct.Struct("!BIQ")
+TCP_HDR_SIZE = TCP_HDR.size
+MAX_TCP_PAYLOAD = 64 * 1024
+DEFAULT_TCP_PAYLOAD = 1200
 LATENCY_ENABLED = 1
 LATENCY_DISABLED = 0
 
@@ -73,7 +74,7 @@ def server(
             )
 
     conn.settimeout(1.0)
-    data = bytearray(64 * 1024)
+    data = bytearray(MAX_TCP_PAYLOAD)
     recv_buffer = bytearray()
     stop_reason = "unknown"
     while True:
@@ -84,50 +85,39 @@ def server(
                 break
             bytes_recv += n
 
-            # Try to extract timestamp from data
-            # Add received data to buffer
             recv_buffer.extend(data[:n])
 
-            # Try to extract headers from buffer
             while len(recv_buffer) >= TCP_HDR_SIZE:
-                try:
-                    latency_flag = TCP_LATENCY_FLAG.unpack_from(recv_buffer)[0]
-                    timestamp_ns = TCP_TIMESTAMP.unpack_from(
-                        recv_buffer, TCP_LATENCY_FLAG.size
-                    )[0]
+                latency_flag, payload_len, timestamp_ns = TCP_HDR.unpack_from(
+                    recv_buffer
+                )
+                if payload_len > MAX_TCP_PAYLOAD:
+                    stop_reason = f"invalid payload length: {payload_len}"
+                    break
 
-                    # Check if client wants latency tracking enabled
-                    if latency_flag == LATENCY_ENABLED:
-                        latency_enabled = True
+                record_size = TCP_HDR_SIZE + payload_len
+                if len(recv_buffer) < record_size:
+                    break
 
-                    # Calculate latency if enabled and timestamp valid
-                    if latency_enabled and timestamp_ns > 0:
-                        latency_ns = time.time_ns() - timestamp_ns
-                        latency_ms = latency_ns / 1e6
+                if latency_flag == LATENCY_ENABLED:
+                    latency_enabled = True
 
-                        latency_sum += latency_ms
-                        latency_count += 1
-                        latency_min = min(latency_min, latency_ms)
-                        latency_max = max(latency_max, latency_ms)
-                        interval_latency_sum += latency_ms
-                        interval_latency_count += 1
-                        interval_latency_min = min(interval_latency_min, latency_ms)
-                        interval_latency_max = max(interval_latency_max, latency_ms)
-                    # Remove header from buffer (header + payload chunk)
-                    # We remove header + 1200 bytes (typical chunk size)
-                    chunk_size = TCP_HDR_SIZE + 1200
-                    if len(recv_buffer) >= chunk_size:
-                        recv_buffer = recv_buffer[chunk_size:]
-                    else:
-                        # Not enough data for full chunk, wait for more
-                        break
-                except (struct.error, IndexError):
-                    # Header not available or invalid, skip latency calc
-                    # Try to recover by removing one byte and trying again
-                    if len(recv_buffer) > 0:
-                        recv_buffer = recv_buffer[1:]
-                    else:
-                        break
+                if latency_enabled and timestamp_ns > 0:
+                    latency_ms = (time.time_ns() - timestamp_ns) / 1e6
+
+                    latency_sum += latency_ms
+                    latency_count += 1
+                    latency_min = min(latency_min, latency_ms)
+                    latency_max = max(latency_max, latency_ms)
+                    interval_latency_sum += latency_ms
+                    interval_latency_count += 1
+                    interval_latency_min = min(interval_latency_min, latency_ms)
+                    interval_latency_max = max(interval_latency_max, latency_ms)
+
+                del recv_buffer[:record_size]
+
+            if stop_reason.startswith("invalid payload length"):
+                break
 
             now = time.time()
             if (now - last_ts) >= interval_seconds:
@@ -195,7 +185,7 @@ def client(
 
     log.start(host, port)
 
-    payload = b"\x00" * (64 * 1024)
+    payload = b"\x00" * MAX_TCP_PAYLOAD
     view = memoryview(payload)
     start = time.time()
     last_ts = start
@@ -210,17 +200,18 @@ def client(
         if controller.should_stop():
             stop_reason = controller.stop_reason()
             break
+
+        to_send = controller.next_send(DEFAULT_TCP_PAYLOAD)
+        if to_send <= 0:
+            continue
+        if to_send > MAX_TCP_PAYLOAD:
+            to_send = MAX_TCP_PAYLOAD
+
         if bytes_sent == 0:
             log.test(host, port, start)
 
-        to_send = 1200
-        if controller.is_pacing():
-            controller.maybe_sleep(to_send)
-
-        # Prepend latency flag + timestamp header to the chunk
         latency_flag = LATENCY_ENABLED if enable_latency else LATENCY_DISABLED
-        timestamp_ns = time.time_ns()
-        header = TCP_LATENCY_FLAG.pack(latency_flag) + TCP_TIMESTAMP.pack(timestamp_ns)
+        header = TCP_HDR.pack(latency_flag, to_send, time.time_ns())
 
         # Send header first
         header_offset = 0
