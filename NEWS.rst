@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+1.5.0
+-----
 * Minor: Added UDP packet recording via --packet-record. The server packs
   traces (sequence, send/receive timestamps, packet size) into fixed-size
   in-memory chunks during the test and writes the CSV file when the test
