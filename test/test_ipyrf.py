@@ -2,6 +2,9 @@ import pytest
 import dummynet
 import logging
 import os
+import csv
+
+from ipyrf.packet_recorder import CSV_COLUMNS
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +35,39 @@ def test_ipyrf_udp_basic_loopback(ipyrf, free_port):
             "max_loss_pct": 5,  # @todo Investigate why we need this. (Allow up to 5% loss)
         },
     )
+
+
+def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
+
+    csv_path = os.path.join(testdirectory.path(), "packets.csv")
+
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_udp_server("127.0.0.1", free_port, packet_record=csv_path)
+    client.run_udp_client("127.0.0.1", free_port, duration=2, bandwidth="10M")
+
+    ipyrf.check(
+        (server, client),
+        timeout=5,
+        criteria={
+            "max_loss_pct": 5,
+        },
+    )
+
+    summary = server.wait_for_summary(timeout=5)
+    assert "packet_record_count" in summary
+    assert summary["packet_record_count"] == summary["packets"]
+    assert summary["packet_record_dropped"] == 0
+    assert summary["packet_record_count"] > 0
+
+    with open(csv_path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert list(rows[0].keys()) == list(CSV_COLUMNS)
+    assert len(rows) == summary["packet_record_count"]
+    assert int(rows[0]["rx_ts"]) >= int(rows[0]["tx_ts"])
+    assert int(rows[0]["latency"]) == int(rows[0]["rx_ts"]) - int(rows[0]["tx_ts"])
+    assert int(rows[0]["size"]) > 0
 
 
 def test_ipyrf_run_failed(ipyrf):

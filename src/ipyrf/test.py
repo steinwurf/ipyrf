@@ -83,15 +83,18 @@ class IPyrfClient:
             self.log_file_path
         ), f"log file {self.log_file_path} already exists"
 
-    def run_udp_server(self, address, port):
+    def run_udp_server(self, address, port, packet_record=None):
         """
         Run ipyrf as a UDP server.
 
         Args:
             address: IP address to bind to.
             port: Port number to listen on.
+            packet_record: Optional CSV path for UDP packet traces.
         """
         args = ["udp", "server", address, "--port", str(port)]
+        if packet_record is not None:
+            args += ["--packet-record", str(packet_record)]
         self.__run(args)
 
     def run_tcp_server(self, address, port):

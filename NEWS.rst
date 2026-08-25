@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* Minor: Added UDP packet recording via --packet-record. The server packs
+  traces (sequence, send/receive timestamps, packet size) into fixed-size
+  in-memory chunks during the test and writes the CSV file when the test
+  ends. Chunks are preallocated so rotation does not stall the receive path.
 * Patch: Changed latency calculation to use milliseconds instead of seconds.
 
 1.4.0
