@@ -91,7 +91,7 @@ def main():
     udp_srv.add_argument(
         "--packet-record",
         metavar="PATH",
-        help="Write received UDP packet traces to a binary file",
+        help="Write received UDP packet traces to a CSV file after the test",
     )
 
     udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")

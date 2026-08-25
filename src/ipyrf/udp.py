@@ -94,7 +94,7 @@ def server(
 
             last_seq_seen = max(last_seq_seen, seq)
             if recorder is not None:
-                recorder.add(seq, timestamp_ns, now_ns)
+                recorder.add(seq, timestamp_ns, now_ns, n)
 
             # Calculate latency if enabled by client and we have a valid timestamp
             if latency_enabled and timestamp_ns > 0:

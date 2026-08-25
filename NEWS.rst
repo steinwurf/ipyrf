@@ -6,10 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
-* Minor: Added UDP packet recording via --packet-record. The server writes
-  a compact binary trace (sequence number and send/receive timestamps) without
-  blocking the receive path, reports recorded/dropped counts in the summary,
-  and can export the trace to CSV.
+* Minor: Added UDP packet recording via --packet-record. The server packs
+  traces (sequence, send/receive timestamps, packet size) into fixed-size
+  in-memory chunks during the test and writes the CSV file when the test
+  ends. Chunks are preallocated so rotation does not stall the receive path.
 * Patch: Changed latency calculation to use milliseconds instead of seconds.
 
 1.4.0

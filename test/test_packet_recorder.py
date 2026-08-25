@@ -1,8 +1,5 @@
 import csv
-import io
 import json
-import os
-import socket
 import struct
 import subprocess
 import sys
@@ -10,20 +7,11 @@ import time
 
 from ipyrf.packet_recorder import (
     CSV_COLUMNS,
+    DEFAULT_NUM_CHUNKS,
+    DEFAULT_RECORDS_PER_CHUNK,
     RECORD_STRUCT,
     PacketRecorder,
-    export_csv,
-    main as packet_record_main,
-    records_from_file,
 )
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
 
 
 def _wait_for_log_type(path, log_type, timeout=5):
@@ -44,96 +32,83 @@ def _wait_for_log_type(path, log_type, timeout=5):
     raise TimeoutError(f"timed out waiting for {log_type} in {path}")
 
 
-def test_binary_encoding_and_csv_export(tmp_path):
-    record_path = tmp_path / "packets.bin"
-    samples = [
-        (1, 100, 150),
-        (2, 200, 240),
-        (3, 1000, 1000),
-    ]
-    with PacketRecorder(
-        record_path, records_per_buffer=8, num_buffers=2
-    ) as recorder:
-        for seq, tx_ns, rx_ns in samples:
-            recorder.add(seq, tx_ns, rx_ns)
+def _read_csv_rows(csv_path):
+    with open(csv_path, newline="") as f:
+        return list(csv.DictReader(f))
 
-    decoded = list(records_from_file(record_path))
-    assert decoded == samples
-    assert RECORD_STRUCT.size == struct.calcsize("<IQQ")
 
+def test_defaults_target_one_gbit_s():
+    assert DEFAULT_RECORDS_PER_CHUNK == 524288
+    assert DEFAULT_NUM_CHUNKS == 8
+
+
+def test_in_memory_encoding_and_csv_on_close(tmp_path):
     csv_path = tmp_path / "packets.csv"
-    export_csv(record_path, csv_path)
+    samples = [
+        (1, 100, 150, 1200),
+        (2, 200, 240, 64),
+        (3, 1000, 1000, 1500),
+    ]
+    with PacketRecorder(csv_path, records_per_chunk=2, num_chunks=2) as recorder:
+        for seq, tx_ns, rx_ns, size in samples:
+            recorder.add(seq, tx_ns, rx_ns, size)
+        assert recorder.recorded == len(samples)
+        assert RECORD_STRUCT.size == struct.calcsize("<QQII")
+        assert not csv_path.exists()
+
     with open(csv_path, newline="") as f:
         rows = list(csv.reader(f))
     assert tuple(rows[0]) == CSV_COLUMNS
     assert rows[1:] == [
-        ["1", "100", "150", "50"],
-        ["2", "200", "240", "40"],
-        ["3", "1000", "1000", "0"],
+        ["100", "150", "1", "1200", "50"],
+        ["200", "240", "2", "64", "40"],
+        ["1000", "1000", "3", "1500", "0"],
     ]
 
-    stdout = io.StringIO()
-    export_csv(record_path, fileobj=stdout)
-    assert stdout.getvalue().splitlines()[0] == ",".join(CSV_COLUMNS)
 
-    out_csv = tmp_path / "from_main.csv"
-    assert packet_record_main([str(record_path), str(out_csv)]) == 0
-    assert out_csv.read_text().splitlines()[0] == ",".join(CSV_COLUMNS)
-
-
-def test_buffer_rotation_writes_all_records(tmp_path):
-    record_path = tmp_path / "rotated.bin"
-    count = 7
-    with PacketRecorder(
-        record_path,
-        records_per_buffer=2,
-        num_buffers=8,
-        start_writer=False,
-    ) as recorder:
+def test_chunk_rotation_keeps_all_records(tmp_path):
+    csv_path = tmp_path / "grown.csv"
+    count = 100
+    with PacketRecorder(csv_path, records_per_chunk=2, num_chunks=4) as recorder:
         for i in range(count):
-            recorder.add(i + 1, i * 10, i * 10 + 3)
-        assert recorder.dropped == 0
+            recorder.add(i + 1, i * 10, i * 10 + 3, 100 + i)
         assert recorder.recorded == count
+        assert not csv_path.exists()
 
-    records = list(records_from_file(record_path))
-    assert [seq for seq, _, _ in records] == list(range(1, count + 1))
-    assert len(records) == count
-    assert os.path.getsize(record_path) == count * RECORD_STRUCT.size
+    rows = _read_csv_rows(csv_path)
+    assert len(rows) == count
+    assert int(rows[-1]["seq"]) == count
+    assert int(rows[-1]["size"]) == 100 + count - 1
 
 
-def test_background_writer_rotation(tmp_path):
-    record_path = tmp_path / "async.bin"
-    count = 7
-    with PacketRecorder(
-        record_path, records_per_buffer=2, num_buffers=8
-    ) as recorder:
+def test_csv_written_only_on_close(tmp_path):
+    csv_path = tmp_path / "deferred.csv"
+    count = 100
+    with PacketRecorder(csv_path, records_per_chunk=2, num_chunks=4) as recorder:
         for i in range(count):
-            recorder.add(i + 1, i * 10, i * 10 + 3)
+            recorder.add(i + 1, i * 10, i * 10 + 3, 1200)
+        assert recorder.recorded == count
+        assert recorder.dropped == 0
+        assert not csv_path.exists()
+
+    rows = _read_csv_rows(csv_path)
+    assert len(rows) == count
+    assert int(rows[0]["seq"]) == 1
+    assert int(rows[0]["size"]) == 1200
+    assert int(rows[-1]["seq"]) == count
+
+
+def test_allocates_chunk_when_pool_empty(tmp_path):
+    csv_path = tmp_path / "alloc.csv"
+    count = 20
+    with PacketRecorder(csv_path, records_per_chunk=1, num_chunks=2) as recorder:
+        for i in range(count):
+            recorder.add(i + 1, i, i + 1, 64)
+        assert recorder.recorded == count
         assert recorder.dropped == 0
 
-    records = list(records_from_file(record_path))
-    assert [seq for seq, _, _ in records] == list(range(1, count + 1))
-
-
-def test_dropped_record_accounting(tmp_path):
-    record_path = tmp_path / "dropped.bin"
-    recorder = PacketRecorder(
-        record_path,
-        records_per_buffer=2,
-        num_buffers=2,
-        start_writer=False,
-    )
-    try:
-        for i in range(6):
-            recorder.add(i + 1, i, i + 1)
-        assert recorder.recorded == 2
-        assert recorder.dropped == 4
-    finally:
-        recorder.close()
-
-    records = list(records_from_file(record_path))
-    assert records == [(1, 0, 1), (2, 1, 2)]
-    assert recorder.recorded + recorder.dropped == 6
+    rows = _read_csv_rows(csv_path)
+    assert len(rows) == count
 
 
 def test_cli_packet_record_help():
@@ -146,9 +121,7 @@ def test_cli_packet_record_help():
     assert "--packet-record" in result.stdout
 
 
-def test_cli_packet_record_roundtrip(tmp_path):
-    port = _free_port()
-    record_path = tmp_path / "packets.bin"
+def test_cli_packet_record_roundtrip(tmp_path, free_port):
     csv_path = tmp_path / "packets.csv"
     server_log = tmp_path / "server.log"
     client_log = tmp_path / "client.log"
@@ -162,9 +135,9 @@ def test_cli_packet_record_roundtrip(tmp_path):
             "server",
             "127.0.0.1",
             "--port",
-            str(port),
+            str(free_port),
             "--packet-record",
-            str(record_path),
+            str(csv_path),
             "--json_log",
             "--logfile",
             str(server_log),
@@ -181,7 +154,7 @@ def test_cli_packet_record_roundtrip(tmp_path):
                 "client",
                 "127.0.0.1",
                 "--port",
-                str(port),
+                str(free_port),
                 "--time",
                 "1",
                 "--bandwidth",
@@ -207,11 +180,8 @@ def test_cli_packet_record_roundtrip(tmp_path):
     assert summary["packet_record_dropped"] == 0
     assert summary["packet_record_count"] > 0
 
-    records = list(records_from_file(record_path))
-    assert len(records) == summary["packet_record_count"]
-    export_csv(record_path, csv_path)
-    with open(csv_path, newline="") as f:
-        rows = list(csv.DictReader(f))
+    rows = _read_csv_rows(csv_path)
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
     assert len(rows) == summary["packet_record_count"]
     assert int(rows[0]["latency_ns"]) == int(rows[0]["rx_ns"]) - int(rows[0]["tx_ns"])
+    assert int(rows[0]["size"]) > 0

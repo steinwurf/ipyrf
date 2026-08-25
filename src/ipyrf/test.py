@@ -90,7 +90,7 @@ class IPyrfClient:
         Args:
             address: IP address to bind to.
             port: Port number to listen on.
-            packet_record: Optional path for UDP packet traces.
+            packet_record: Optional CSV path for UDP packet traces.
         """
         args = ["udp", "server", address, "--port", str(port)]
         if packet_record is not None:

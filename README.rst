@@ -100,7 +100,7 @@ UDP server:
 .. code-block:: bash
 
    ipyrf udp server 0.0.0.0 --port 12345
-   ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.bin
+   ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.csv
 
 UDP client (with bandwidth cap and optional payload size):
 
@@ -170,20 +170,35 @@ UDP-specific options:
 - ``--time``: Test duration (seconds), default 10
 - ``--bandwidth``: Target rate (required for UDP client; e.g., ``50M``)
 - ``-l/--length``: UDP payload length (default 1200)
-- ``--packet-record PATH``: UDP server: write received packet traces to a binary file
+- ``--packet-record PATH``: UDP server: write received packet traces to a CSV file after the test
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
 UDP packet recording
 --------------------
 
-Pass ``--packet-record PATH`` to a UDP server to write one binary record per received datagram (sequence number, sender timestamp, receiver timestamp). Disk I/O is offloaded from the receive path; if recording cannot keep up, records are dropped and the counts appear in the summary.
+Pass ``--packet-record PATH`` to a UDP server to record one trace entry per
+received datagram (sequence number, sender timestamp, receiver timestamp,
+packet size). Records are packed into fixed-size in-memory chunks during the
+test so the receive path stays free of CSV I/O. Chunks are allocated before
+the test starts (about 20 s of 1 Gbit/s traffic by default) so rotation does
+not stall the receive loop. When the test ends, the CSV file (columns
+``tx_ns``, ``rx_ns``, ``seq``, ``size``, ``latency_ns``) is written to
+``PATH``.
 
-Export the trace to CSV (columns ``seq``, ``tx_ns``, ``rx_ns``, ``latency_ns``):
+Quick local test (two terminals):
 
 .. code-block:: bash
 
-   python3 -m ipyrf.packet_recorder packets.bin packets.csv
+   # Terminal 1 — server with recording
+   ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.csv
+
+   # Terminal 2 — short paced client
+   ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 2 -l 1200
+
+When the client finishes, the server exits and ``packets.csv`` contains the
+trace. Use ``--enable-latency`` on the client if you also want latency
+stats in the server summary (per-packet latency is always in the CSV).
 
 JSON logging
 ------------

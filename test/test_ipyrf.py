@@ -4,7 +4,7 @@ import logging
 import os
 import csv
 
-from ipyrf.packet_recorder import CSV_COLUMNS, export_csv, records_from_file
+from ipyrf.packet_recorder import CSV_COLUMNS
 
 log = logging.getLogger(__name__)
 
@@ -39,13 +39,12 @@ def test_ipyrf_udp_basic_loopback(ipyrf, free_port):
 
 def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
 
-    record_path = os.path.join(testdirectory.path(), "packets.bin")
     csv_path = os.path.join(testdirectory.path(), "packets.csv")
 
     server = ipyrf.build()
     client = ipyrf.build()
 
-    server.run_udp_server("127.0.0.1", free_port, packet_record=record_path)
+    server.run_udp_server("127.0.0.1", free_port, packet_record=csv_path)
     client.run_udp_client("127.0.0.1", free_port, duration=2, bandwidth="10M")
 
     ipyrf.check(
@@ -62,17 +61,13 @@ def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
     assert summary["packet_record_dropped"] == 0
     assert summary["packet_record_count"] > 0
 
-    records = list(records_from_file(record_path))
-    assert len(records) == summary["packet_record_count"]
-    seq, tx_ns, rx_ns = records[0]
-    assert rx_ns >= tx_ns
-
-    export_csv(record_path, csv_path)
     with open(csv_path, newline="") as f:
         rows = list(csv.DictReader(f))
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
     assert len(rows) == summary["packet_record_count"]
+    assert int(rows[0]["rx_ns"]) >= int(rows[0]["tx_ns"])
     assert int(rows[0]["latency_ns"]) == int(rows[0]["rx_ns"]) - int(rows[0]["tx_ns"])
+    assert int(rows[0]["size"]) > 0
 
 
 def test_ipyrf_run_failed(ipyrf):
