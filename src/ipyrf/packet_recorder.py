@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Union
 
 RECORD_STRUCT = struct.Struct("<QQII")
-CSV_COLUMNS = ("seq", "size", "latency", "tx_ts", "rx_ts")
+CSV_COLUMNS = ("sequence", "size_bytes", "transmitted_ns", "received_ns")
 
 # Defaults target ~1 Gbit/s with 1200-byte payloads (~104k pkt/s): one chunk
 # holds ~5 s of traffic; eight chunks cover ~40 s (~96 MiB) without allocating
@@ -79,7 +79,7 @@ class PacketRecorder:
                 for tx_ns, rx_ns, seq, size in self._record.iter_unpack(
                     memoryview(chunk)[:nbytes]
                 ):
-                    writer.writerow((seq, size, rx_ns - tx_ns, tx_ns, rx_ns))
+                    writer.writerow((seq, size, tx_ns, rx_ns))
 
         self._chunks.clear()
 

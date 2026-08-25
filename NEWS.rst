@@ -6,7 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Patch: Removed the latency column from --packet-record CSV output. Column
+  headers now include units (``sequence``, ``size_bytes``,
+  ``transmitted_ns``, ``received_ns``). Derive latency as
+  ``received_ns - transmitted_ns``.
 
 1.5.0
 -----

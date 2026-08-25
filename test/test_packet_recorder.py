@@ -60,9 +60,9 @@ def test_in_memory_encoding_and_csv_on_close(tmp_path):
         rows = list(csv.reader(f))
     assert tuple(rows[0]) == CSV_COLUMNS
     assert rows[1:] == [
-        ["1", "1200", "50", "100", "150"],
-        ["2", "64", "40", "200", "240"],
-        ["3", "1500", "0", "1000", "1000"],
+        ["1", "1200", "100", "150"],
+        ["2", "64", "200", "240"],
+        ["3", "1500", "1000", "1000"],
     ]
 
 
@@ -77,8 +77,8 @@ def test_chunk_rotation_keeps_all_records(tmp_path):
 
     rows = _read_csv_rows(csv_path)
     assert len(rows) == count
-    assert int(rows[-1]["seq"]) == count
-    assert int(rows[-1]["size"]) == 100 + count - 1
+    assert int(rows[-1]["sequence"]) == count
+    assert int(rows[-1]["size_bytes"]) == 100 + count - 1
 
 
 def test_csv_written_only_on_close(tmp_path):
@@ -93,9 +93,9 @@ def test_csv_written_only_on_close(tmp_path):
 
     rows = _read_csv_rows(csv_path)
     assert len(rows) == count
-    assert int(rows[0]["seq"]) == 1
-    assert int(rows[0]["size"]) == 1200
-    assert int(rows[-1]["seq"]) == count
+    assert int(rows[0]["sequence"]) == 1
+    assert int(rows[0]["size_bytes"]) == 1200
+    assert int(rows[-1]["sequence"]) == count
 
 
 def test_allocates_chunk_when_pool_empty(tmp_path):
@@ -183,5 +183,5 @@ def test_cli_packet_record_roundtrip(tmp_path, free_port):
     rows = _read_csv_rows(csv_path)
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
     assert len(rows) == summary["packet_record_count"]
-    assert int(rows[0]["latency"]) == int(rows[0]["rx_ts"]) - int(rows[0]["tx_ts"])
-    assert int(rows[0]["size"]) > 0
+    assert int(rows[0]["received_ns"]) >= int(rows[0]["transmitted_ns"])
+    assert int(rows[0]["size_bytes"]) > 0

@@ -183,8 +183,8 @@ packet size). Records are packed into fixed-size in-memory chunks during the
 test so the receive path stays free of CSV I/O. Chunks are allocated before
 the test starts (about 20 s of 1 Gbit/s traffic by default) so rotation does
 not stall the receive loop. When the test ends, the CSV file (columns
-``seq``, ``size``, ``latency``, ``tx_ts``, ``rx_ts``) is written to
-``PATH``.
+``sequence``, ``size_bytes``, ``transmitted_ns``, ``received_ns``) is written to
+``PATH``. Per-packet latency in nanoseconds is ``received_ns - transmitted_ns``.
 
 Quick local test (two terminals):
 
@@ -198,7 +198,7 @@ Quick local test (two terminals):
 
 When the client finishes, the server exits and ``packets.csv`` contains the
 trace. Use ``--enable-latency`` on the client if you also want latency
-stats in the server summary (per-packet latency is always in the CSV).
+stats in the server summary.
 
 JSON logging
 ------------
