@@ -60,9 +60,9 @@ def test_in_memory_encoding_and_csv_on_close(tmp_path):
         rows = list(csv.reader(f))
     assert tuple(rows[0]) == CSV_COLUMNS
     assert rows[1:] == [
-        ["100", "150", "1", "1200", "50"],
-        ["200", "240", "2", "64", "40"],
-        ["1000", "1000", "3", "1500", "0"],
+        ["1", "1200", "50", "100", "150"],
+        ["2", "64", "40", "200", "240"],
+        ["3", "1500", "0", "1000", "1000"],
     ]
 
 
@@ -183,5 +183,5 @@ def test_cli_packet_record_roundtrip(tmp_path, free_port):
     rows = _read_csv_rows(csv_path)
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
     assert len(rows) == summary["packet_record_count"]
-    assert int(rows[0]["latency_ns"]) == int(rows[0]["rx_ns"]) - int(rows[0]["tx_ns"])
+    assert int(rows[0]["latency"]) == int(rows[0]["rx_ts"]) - int(rows[0]["tx_ts"])
     assert int(rows[0]["size"]) > 0

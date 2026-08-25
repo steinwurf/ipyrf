@@ -183,7 +183,7 @@ packet size). Records are packed into fixed-size in-memory chunks during the
 test so the receive path stays free of CSV I/O. Chunks are allocated before
 the test starts (about 20 s of 1 Gbit/s traffic by default) so rotation does
 not stall the receive loop. When the test ends, the CSV file (columns
-``tx_ns``, ``rx_ns``, ``seq``, ``size``, ``latency_ns``) is written to
+``seq``, ``size``, ``latency``, ``tx_ts``, ``rx_ts``) is written to
 ``PATH``.
 
 Quick local test (two terminals):

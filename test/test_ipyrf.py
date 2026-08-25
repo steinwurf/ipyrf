@@ -65,8 +65,8 @@ def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
         rows = list(csv.DictReader(f))
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
     assert len(rows) == summary["packet_record_count"]
-    assert int(rows[0]["rx_ns"]) >= int(rows[0]["tx_ns"])
-    assert int(rows[0]["latency_ns"]) == int(rows[0]["rx_ns"]) - int(rows[0]["tx_ns"])
+    assert int(rows[0]["rx_ts"]) >= int(rows[0]["tx_ts"])
+    assert int(rows[0]["latency"]) == int(rows[0]["rx_ts"]) - int(rows[0]["tx_ts"])
     assert int(rows[0]["size"]) > 0
 
 
