@@ -169,6 +169,36 @@ Examples:
    ipyrf tcp client 127.0.0.1 --traffic-pattern trace.json
    ipyrf udp client 127.0.0.1 --traffic-pattern rates.json --bandwidth 50M -l 1200
 
+Synthetic video traces
+~~~~~~~~~~~~~~~~~~~~~~
+
+Generate a normal ``trace`` file that resembles encoded video. This does not
+add video-specific TCP/UDP behavior — use the resulting file with
+``--traffic-pattern`` like any other trace.
+
+**Synthetic** (FPS + GOP + fixed I/P/B sizes):
+
+.. code-block:: bash
+
+   ipyrf generate video -o video.json --fps 30 --gop IPBB \
+     --i-size 40000 --p-size 8000 --b-size 2000 --duration 10
+
+**From real media** (requires ``ffprobe`` on ``PATH``), or from a saved
+ffprobe frames dump:
+
+.. code-block:: bash
+
+   ipyrf generate video -o video.json --from clip.mp4
+   ipyrf generate video -o video.json --from clip.mp4 --duration 5
+   ffprobe -v quiet -select_streams v:0 -show_frames -print_format json \
+     clip.mp4 > frames.json
+   ipyrf generate video -o video.json --ffprobe-json frames.json
+
+   ipyrf udp client 127.0.0.1 --traffic-pattern video.json -l 1200
+
+Each event is tagged with the frame type (``I``, ``P``, or ``B`` when known).
+Generation parameters / source path are stored under ``metadata``.
+
 Interactive mode
 ----------------
 
@@ -205,6 +235,7 @@ Top-level structure:
 .. code-block:: text
 
    ipyrf [tcp|udp] [server|client] [OPTIONS]
+   ipyrf generate video -o FILE [OPTIONS]
 
 Common options (both protocols, both roles):
 
@@ -241,6 +272,17 @@ UDP-specific options:
   without receiving packets (default 2.0)
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
+
+Generate options:
+
+- ``generate video -o FILE``: Write a video-like ``trace`` JSON file
+- ``--from MEDIA``: Build the trace from video frames via ``ffprobe``
+- ``--ffprobe-json FILE``: Same, from a saved ``ffprobe -show_frames`` dump
+- ``--fps`` / ``--gop`` / ``--i-size`` / ``--p-size`` / ``--b-size``:
+  Synthetic mode parameters (ignored when using ``--from`` /
+  ``--ffprobe-json``)
+- ``--duration``: Synthetic length in seconds (default 10), or optional
+  truncate when importing from ffprobe
 
 UDP packet recording
 --------------------

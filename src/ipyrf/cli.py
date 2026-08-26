@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import argparse
+import sys
 
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
@@ -9,6 +10,14 @@ from . import tcp, udp
 from .interactive import InteractiveController
 from .controllers import StaticPacingController, TrafficPatternController
 from .traffic_pattern import TrafficPatternError, load_traffic_pattern
+from .video_trace import (
+    VideoTraceError,
+    generate_video_trace,
+    generate_video_trace_from_ffprobe,
+    load_ffprobe_json,
+    run_ffprobe,
+    write_trace_document,
+)
 
 
 def parse_traffic_pattern_arg(path: str):
@@ -35,6 +44,85 @@ def main():
     common.add_argument("--interval", type=float, default=1.0, help="Stats interval")
 
     subp = p.add_subparsers(dest="protocol", required=True)
+
+    gen_parser = subp.add_parser(
+        "generate", help="Generate traffic-pattern JSON files"
+    )
+    gen_sub = gen_parser.add_subparsers(dest="generate_kind", required=True)
+    video_parser = gen_sub.add_parser(
+        "video",
+        help=(
+            "Encoded-video-like trace (synthetic or from ffprobe); "
+            "writes normal trace JSON"
+        ),
+    )
+    video_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="FILE",
+        help="Write the generated trace JSON to FILE",
+    )
+    video_source = video_parser.add_mutually_exclusive_group()
+    video_source.add_argument(
+        "--from",
+        dest="from_media",
+        metavar="MEDIA",
+        help="Run ffprobe on MEDIA and convert video frames to a trace",
+    )
+    video_source.add_argument(
+        "--ffprobe-json",
+        metavar="FILE",
+        help=(
+            "Use a saved ffprobe -show_frames JSON dump instead of "
+            "running ffprobe"
+        ),
+    )
+    video_parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="Synthetic mode: frames per second (default: 30)",
+    )
+    video_parser.add_argument(
+        "--gop",
+        default="IPBB",
+        help=(
+            "Synthetic mode: GOP frame-type pattern using I/P/B "
+            "characters (default: IPBB)"
+        ),
+    )
+    video_parser.add_argument(
+        "--i-size",
+        type=int,
+        default=40_000,
+        metavar="BYTES",
+        help="Synthetic mode: I-frame size in bytes (default: 40000)",
+    )
+    video_parser.add_argument(
+        "--p-size",
+        type=int,
+        default=8_000,
+        metavar="BYTES",
+        help="Synthetic mode: P-frame size in bytes (default: 8000)",
+    )
+    video_parser.add_argument(
+        "--b-size",
+        type=int,
+        default=2_000,
+        metavar="BYTES",
+        help="Synthetic mode: B-frame size in bytes (default: 2000)",
+    )
+    video_parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help=(
+            "Synthetic mode: pattern length in seconds (default: 10). "
+            "With --from/--ffprobe-json: optional truncate to this many "
+            "seconds from the first frame"
+        ),
+    )
 
     tcp_parser = subp.add_parser("tcp", help="TCP mode")
     tcp_sub = tcp_parser.add_subparsers(dest="role", required=True)
@@ -145,6 +233,49 @@ def main():
     )
 
     args = p.parse_args()
+
+    if args.protocol == "generate":
+        if args.generate_kind == "video":
+            try:
+                if args.from_media is not None:
+                    probe = run_ffprobe(args.from_media)
+                    doc = generate_video_trace_from_ffprobe(
+                        probe,
+                        duration=args.duration,
+                        source=str(args.from_media),
+                    )
+                elif args.ffprobe_json is not None:
+                    probe = load_ffprobe_json(args.ffprobe_json)
+                    doc = generate_video_trace_from_ffprobe(
+                        probe,
+                        duration=args.duration,
+                        source=str(args.ffprobe_json),
+                    )
+                else:
+                    doc = generate_video_trace(
+                        fps=args.fps,
+                        gop=args.gop,
+                        i_size=args.i_size,
+                        p_size=args.p_size,
+                        b_size=args.b_size,
+                        duration=(
+                            10.0 if args.duration is None else args.duration
+                        ),
+                    )
+                write_trace_document(args.output, doc)
+            except VideoTraceError as e:
+                print(f"error: {e}", file=sys.stderr)
+                raise SystemExit(2) from e
+            meta = doc["metadata"]
+            detail = meta.get("gop") or meta.get("source") or meta.get(
+                "generator"
+            )
+            print(
+                f"Wrote {len(doc['events'])} frame events "
+                f"({meta.get('frames')} frames, {detail}) to {args.output}"
+            )
+            return
+        raise ValueError(f"Unknown generate kind: {args.generate_kind}")
 
     if args.role not in ("server", "client"):
         raise ValueError(f"Invalid role: {args.role}. Must be 'server' or 'client'.")

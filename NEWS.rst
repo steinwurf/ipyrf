@@ -6,6 +6,12 @@ every change, see the Git log.
 
 Latest
 ------
+* Minor: Added ``ipyrf generate video`` to synthesize encoded-video-like
+  ``trace`` traffic patterns from FPS, a GOP frame-type pattern (I/P/B),
+  and configurable frame sizes, or from real media via ``--from`` /
+  ``--ffprobe-json`` (ffprobe ``-show_frames``). Output is normal
+  ``trace`` JSON for ``--traffic-pattern`` (no video-specific TCP/UDP
+  behavior).
 * Minor: Added ``--inactivity-timeout`` for UDP servers to configure how
   long to wait without packets before exiting (default 2.0 seconds).
 * Minor: Added ``piecewise_rate`` traffic patterns: consecutive periods
