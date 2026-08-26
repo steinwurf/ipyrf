@@ -7,6 +7,7 @@ from typing import Optional
 
 from .logger import Logger
 from .controllers import BasePacingController
+from .utils import bind_to_device
 
 # TCP record header: latency flag, payload length, send timestamp (ns), event id
 TCP_HDR = struct.Struct("!BIQI")
@@ -178,8 +179,11 @@ def client(
     set_mss: Optional[int],
     controller: BasePacingController,
     enable_latency: bool = False,
+    bind_dev: Optional[str] = None,
 ):
-    sock = prepare_client_socket(log, host, port, congestion_control, set_mss)
+    sock = prepare_client_socket(
+        log, host, port, congestion_control, set_mss, bind_dev=bind_dev
+    )
     if sock is None:
         return
 
@@ -295,6 +299,7 @@ def prepare_client_socket(
     port: int,
     congestion_control: Optional[str],
     set_mss: Optional[int],
+    bind_dev: Optional[str] = None,
 ) -> Optional[socket.socket]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -313,6 +318,8 @@ def prepare_client_socket(
 
     if set_mss:
         set_tcp_mss(sock, set_mss)
+    if bind_dev is not None:
+        bind_to_device(sock, bind_dev)
     try:
         sock.connect((host, port))
     except Exception as e:

@@ -11,6 +11,7 @@ Features
 - UDP packet loss estimation
 - Optional per-datagram UDP packet recording
 - Linux TCP congestion control selection (if available)
+- Client ``--bind-dev`` to transmit via a specific network interface (Linux)
 
 Installation
 ------------
@@ -95,6 +96,7 @@ TCP client:
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --set-mss 1400
    ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
+   ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --bind-dev eth0
 
 UDP server:
 
@@ -110,6 +112,7 @@ UDP client (with bandwidth cap and optional payload size):
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 -l 1200
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
+   ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --bind-dev eth0
 
 Traffic patterns
 ----------------
@@ -257,6 +260,8 @@ TCP-specific options:
 - ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
   (``trace`` or ``piecewise_rate``)
 - ``--set-mss``: Set approximate MSS via ``TCP_MAXSEG``
+- ``--bind-dev DEVICE``: Bind the client socket to a network interface
+  (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
@@ -273,6 +278,8 @@ UDP-specific options:
 - ``--packet-record PATH``: UDP server: write received packet traces to a CSV file after the test
 - ``--inactivity-timeout SECONDS``: UDP server: exit after this many seconds
   without receiving packets (default 2.0)
+- ``--bind-dev DEVICE``: Bind the client socket to a network interface
+  (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
@@ -330,6 +337,8 @@ Notes
 - Output is JSON (newline-delimited for update events) when ``--json_log`` is given; otherwise, a human-readable summary is printed.
 - UDP mode sends a FIN marker at the end and the server exits after FIN (or inactivity timeout).
 - On Linux, congestion control selection is exposed if ``/proc`` entries are available.
+- On Linux, ``--bind-dev`` uses ``SO_BINDTODEVICE`` and typically needs
+  ``CAP_NET_RAW`` or root.
 
 License
 -------

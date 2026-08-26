@@ -79,6 +79,29 @@ def parse_ip(s: str) -> str:
     raise argparse.ArgumentTypeError(f"Invalid IP address: {s}")
 
 
+def bind_to_device(sock: socket.socket, device: str) -> None:
+    """Bind ``sock`` to a network interface via ``SO_BINDTODEVICE`` (Linux).
+
+    Requires ``CAP_NET_RAW`` (or root) on most kernels. Raises ``OSError`` if
+    the option is unavailable or the bind fails.
+    """
+    if not hasattr(socket, "SO_BINDTODEVICE"):
+        raise OSError(
+            "SO_BINDTODEVICE is not available on this platform (Linux only)"
+        )
+    try:
+        sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_BINDTODEVICE,
+            device.encode("utf-8"),
+        )
+    except OSError as e:
+        raise OSError(
+            f"Failed to bind socket to device '{device}': {e}. "
+            "This typically requires CAP_NET_RAW or root."
+        ) from e
+
+
 def human_bps(bps: float) -> str:
     if bps == float("inf"):
         return "unlimited"

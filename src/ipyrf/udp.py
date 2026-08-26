@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 from .logger import Logger
 from .controllers import BasePacingController
 from .packet_recorder import PacketRecorder
+from .utils import bind_to_device
 
 
 UDP_HDR = struct.Struct("!I Q I I")
@@ -190,11 +191,14 @@ def client(
     payload_len: int,
     controller: BasePacingController,
     enable_latency: bool = False,
+    bind_dev: Optional[str] = None,
 ):
     if payload_len < UDP_HDR.size:
         payload_len = UDP_HDR.size
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if bind_dev is not None:
+        bind_to_device(sock, bind_dev)
     sock.connect((host, port))
 
     log.start(host, port)

@@ -167,6 +167,14 @@ def main():
         action="store_true",
         help="Enable latency tracking on the server",
     )
+    tcp_cli.add_argument(
+        "--bind-dev",
+        metavar="DEVICE",
+        help=(
+            "Bind the client socket to DEVICE (Linux SO_BINDTODEVICE; "
+            "typically requires CAP_NET_RAW or root)"
+        ),
+    )
 
     # Time, interactive mode, and traffic pattern are mutually exclusive
     tcp_time_group = tcp_cli.add_mutually_exclusive_group()
@@ -215,6 +223,14 @@ def main():
         "--enable-latency",
         action="store_true",
         help="Enable latency tracking on the server",
+    )
+    udp_cli.add_argument(
+        "--bind-dev",
+        metavar="DEVICE",
+        help=(
+            "Bind the client socket to DEVICE (Linux SO_BINDTODEVICE; "
+            "typically requires CAP_NET_RAW or root)"
+        ),
     )
 
     # Time, interactive mode, and traffic pattern are mutually exclusive
@@ -319,6 +335,7 @@ def main():
                 args.length,
                 controller,
                 args.enable_latency,
+                bind_dev=args.bind_dev,
             )
 
     else:
@@ -364,6 +381,7 @@ def main():
                 args.set_mss,
                 controller,
                 args.enable_latency,
+                bind_dev=args.bind_dev,
             )
 
     if controller is not None:

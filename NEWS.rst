@@ -6,6 +6,9 @@ every change, see the Git log.
 
 Latest
 ------
+* Minor: Added ``--bind-dev DEVICE`` for TCP/UDP clients to bind the
+  transmit socket to a network interface via Linux ``SO_BINDTODEVICE``
+  (typically requires ``CAP_NET_RAW`` or root).
 * Minor: UDP and TCP record headers now carry a traffic-pattern
   ``event_id`` (1-based event/period index, or ``0`` when unset). Sends
   stay within a single event or period so packets can be attributed via
