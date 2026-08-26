@@ -2,6 +2,25 @@ from __future__ import annotations
 import argparse
 import pathlib
 import socket
+import time
+
+def sleep_precise(sleep_time_s: float) -> None:
+    if sleep_time_s <= 0:
+            return
+    if sleep_time_s > 0.5:
+        time.sleep(sleep_time_s)
+    else:
+        # Busy wait for very short sleeps
+        end = time.perf_counter() + sleep_time_s
+        while time.perf_counter() < end:
+            pass
+
+def sleep_until_ns(deadline_ns: int) -> None:
+    now_ns = time.monotonic_ns()
+    remaining_ns = deadline_ns - now_ns
+    if remaining_ns <= 0:
+        return
+    sleep_precise(remaining_ns / 1_000_000_000)
 
 
 def tcp_congestion_control_info():

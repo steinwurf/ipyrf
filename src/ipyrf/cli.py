@@ -7,7 +7,15 @@ from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
 from .interactive import InteractiveController
-from .controllers import StaticPacingController
+from .controllers import StaticPacingController, TrafficPatternController
+from .traffic_pattern import TrafficPatternError, load_traffic_pattern
+
+
+def parse_traffic_pattern_arg(path: str):
+    try:
+        return load_traffic_pattern(path)
+    except TrafficPatternError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
 
 
 def main():
@@ -72,13 +80,19 @@ def main():
         help="Enable latency tracking on the server",
     )
 
-    # Time and interactive mode are mutually exclusive
+    # Time, interactive mode, and traffic pattern are mutually exclusive
     tcp_time_group = tcp_cli.add_mutually_exclusive_group()
     tcp_time_group.add_argument(
         "--time", type=int, default=10, help="Test duration in seconds"
     )
     tcp_time_group.add_argument(
         "--interactive", action="store_true", help="Run client in interactive mode"
+    )
+    tcp_time_group.add_argument(
+        "--traffic-pattern",
+        type=parse_traffic_pattern_arg,
+        metavar="FILE",
+        help="JSON traffic pattern file (trace or piecewise_rate)",
     )
 
     udp_parser = subp.add_parser("udp", help="UDP mode")
@@ -92,6 +106,13 @@ def main():
         "--packet-record",
         metavar="PATH",
         help="Write received UDP packet traces to a CSV file after the test",
+    )
+    udp_srv.add_argument(
+        "--inactivity-timeout",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="Exit after this many seconds without receiving packets (default: 2.0)",
     )
 
     udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")
@@ -108,13 +129,19 @@ def main():
         help="Enable latency tracking on the server",
     )
 
-    # Time and interactive mode are mutually exclusive
+    # Time, interactive mode, and traffic pattern are mutually exclusive
     udp_time_group = udp_cli.add_mutually_exclusive_group()
     udp_time_group.add_argument(
         "--time", type=int, default=10, help="Test duration in seconds"
     )
     udp_time_group.add_argument(
         "--interactive", action="store_true", help="Run client in interactive mode"
+    )
+    udp_time_group.add_argument(
+        "--traffic-pattern",
+        type=parse_traffic_pattern_arg,
+        metavar="FILE",
+        help="JSON traffic pattern file (trace or piecewise_rate)",
     )
 
     args = p.parse_args()
@@ -133,17 +160,27 @@ def main():
                 args.port,
                 args.interval,
                 packet_record_path=args.packet_record,
+                inactivity_timeout=args.inactivity_timeout,
             )
         else:
-            bw = (
-                args.bandwidth or parse_bandwidth("50M")
-                if args.interactive
-                else args.bandwidth
-            )
-            if args.interactive:
-                controller = InteractiveController(bw, args.interval)
+            if getattr(args, "traffic_pattern", None) is not None:
+                controller = TrafficPatternController(
+                    args.traffic_pattern,
+                    args.interval,
+                    bandwidth_bps=args.bandwidth,
+                )
             else:
-                controller = StaticPacingController(bw, args.time, args.interval)
+                bw = (
+                    args.bandwidth or parse_bandwidth("50M")
+                    if args.interactive
+                    else args.bandwidth
+                )
+                if args.interactive:
+                    controller = InteractiveController(bw, args.interval)
+                else:
+                    controller = StaticPacingController(
+                        bw, args.time, args.interval
+                    )
             udp.client(
                 log,
                 args.address,
@@ -163,14 +200,30 @@ def main():
                 args.congestion_control,
             )
         else:
-            if args.interactive:
+            # TCP record header is sent in addition to the payload returned by
+            # next_send(); charge it so measured rates match --bandwidth /
+            # traffic-pattern bitrates. UDP includes its header in the datagram.
+            tcp_overhead = tcp.TCP_HDR_SIZE
+            if getattr(args, "traffic_pattern", None) is not None:
+                controller = TrafficPatternController(
+                    args.traffic_pattern,
+                    args.interval,
+                    bandwidth_bps=args.bandwidth,
+                    header_overhead=tcp_overhead,
+                )
+            elif args.interactive:
                 # If no bandwidth provided, controller will act as unlimited until adjusted
-                controller = InteractiveController(args.bandwidth, args.interval)
+                controller = InteractiveController(
+                    args.bandwidth,
+                    args.interval,
+                    header_overhead=tcp_overhead,
+                )
             else:
                 controller = StaticPacingController(
                     args.bandwidth,
                     args.time,
                     args.interval,
+                    header_overhead=tcp_overhead,
                 )
             tcp.client(
                 log,

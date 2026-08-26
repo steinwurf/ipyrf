@@ -6,6 +6,36 @@ every change, see the Git log.
 
 Latest
 ------
+* Minor: Added ``--inactivity-timeout`` for UDP servers to configure how
+  long to wait without packets before exiting (default 2.0 seconds).
+* Minor: Added ``piecewise_rate`` traffic patterns: consecutive periods
+  with ``duration`` and ``bitrate`` (bits/s, or strings like ``"2M"``).
+  Bitrate ``0`` is idle. Loaded via the same ``--traffic-pattern`` JSON
+  interface as ``trace`` files.
+* Patch: Traffic-pattern sends now coalesce to the requested chunk size
+  instead of emitting tiny records as soon as any byte becomes
+  available. That was inflating TCP wire rates via per-record headers
+  (especially for low continuous bitrates).
+* Patch: TCP pacing now accounts for the per-record header so
+  ``--bandwidth`` and traffic-pattern bitrates match the measured
+  socket rate (UDP was already correct because the header is inside
+  the datagram).
+* Patch: Traffic-pattern scheduling now uses monotonic deadlines and
+  sleeps for most of each wait, with a short final sleep near the
+  deadline instead of busy-waiting.
+* Minor: ``--bandwidth`` can be combined with ``--traffic-pattern`` as an
+  optional egress-rate cap. The pattern still controls when bytes become
+  available; the pacer limits how fast those bytes may be sent.
+* Minor: Added ``--traffic-pattern FILE`` for TCP/UDP clients. The JSON
+  format is ``{"version": 1, "type": "trace", "events": [...]}`` with
+  optional ``metadata`` and per-event ``tags``. A traffic-pattern
+  controller releases event bytes at their relative timestamps and
+  fragments large events into normal send chunks. Existing
+  ``--bandwidth`` / ``--time`` behavior is unchanged when no pattern is
+  supplied.
+* Minor: Added a traffic-pattern abstraction (``TrafficPattern``) with a
+  ``TraceTrafficPattern`` that makes bytes available at relative
+  timestamps from a list of ``(timestamp, nbytes)`` events.
 * Minor: Extended BasePacingController with next_send() so custom
   controllers can decide both when to send and how many bytes to send.
   Static and interactive pacing keep their previous behavior.

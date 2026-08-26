@@ -83,7 +83,7 @@ class IPyrfClient:
             self.log_file_path
         ), f"log file {self.log_file_path} already exists"
 
-    def run_udp_server(self, address, port, packet_record=None):
+    def run_udp_server(self, address, port, packet_record=None, inactivity_timeout=None):
         """
         Run ipyrf as a UDP server.
 
@@ -91,10 +91,13 @@ class IPyrfClient:
             address: IP address to bind to.
             port: Port number to listen on.
             packet_record: Optional CSV path for UDP packet traces.
+            inactivity_timeout: Optional seconds without packets before exit.
         """
         args = ["udp", "server", address, "--port", str(port)]
         if packet_record is not None:
             args += ["--packet-record", str(packet_record)]
+        if inactivity_timeout is not None:
+            args += ["--inactivity-timeout", str(inactivity_timeout)]
         self.__run(args)
 
     def run_tcp_server(self, address, port):

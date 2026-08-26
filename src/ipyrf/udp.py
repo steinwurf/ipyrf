@@ -20,11 +20,12 @@ def server(
     port: int,
     interval_seconds: float,
     packet_record_path: Optional[str] = None,
+    inactivity_timeout: float = 2.0,
 ):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((bind_addr, port))
-    sock.settimeout(2.0)
+    sock.settimeout(inactivity_timeout)
 
     active = False
     start = 0.0
@@ -74,7 +75,7 @@ def server(
                 start = now
                 last_ts = now
                 src_peer = peer
-            inactivity_deadline = now + 2.0
+            inactivity_deadline = now + inactivity_timeout
 
             if n >= UDP_HDR.size:
                 seq, timestamp_ns, flags = UDP_HDR.unpack_from(recv_buffer)

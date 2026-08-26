@@ -94,6 +94,7 @@ TCP client:
 
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --set-mss 1400
+   ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
 
 UDP server:
 
@@ -108,6 +109,65 @@ UDP client (with bandwidth cap and optional payload size):
 
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 -l 1200
+   ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
+
+Traffic patterns
+----------------
+
+Pass ``--traffic-pattern FILE`` to a TCP or UDP client to drive sends from a
+JSON pattern instead of ``--time``. Two pattern types are supported.
+
+**Trace** (``"type": "trace"``): discrete byte arrivals at timestamps:
+
+.. code-block:: json
+
+   {
+     "version": 1,
+     "type": "trace",
+     "metadata": {"name": "example"},
+     "events": [
+       {"timestamp": 0.0, "nbytes": 1200},
+       {"timestamp": 0.1, "nbytes": 4800, "tags": ["burst"]},
+       {"timestamp": 1.0, "nbytes": 1200}
+     ]
+   }
+
+Each event makes ``nbytes`` available at relative time ``timestamp`` (seconds
+from test start). Budgets are in socket bytes as counted by ipyrf (for TCP that
+includes the per-record header). Large events are fragmented into normal
+TCP/UDP send chunks without changing when those bytes become available.
+
+**Piecewise rate** (``"type": "piecewise_rate"``): consecutive periods with a
+duration and bitrate (bits/s; numeric or strings like ``"2M"``). A bitrate of
+``0`` is idle:
+
+.. code-block:: json
+
+   {
+     "version": 1,
+     "type": "piecewise_rate",
+     "metadata": {"name": "example"},
+     "periods": [
+       {"duration": 2.0, "bitrate": "2M"},
+       {"duration": 1.0, "bitrate": 0},
+       {"duration": 3.0, "bitrate": "10M", "tags": ["burst"]}
+     ]
+   }
+
+Bytes become available continuously at ``bitrate / 8`` bytes per second within
+each period (socket bytes, matching measured rates). ``metadata`` and
+per-event/period ``tags`` are optional. Optionally
+pass ``--bandwidth`` together with ``--traffic-pattern`` to cap egress rate: the
+pattern decides when bytes become available, and the pacer limits how quickly
+they may be transmitted. ``--traffic-pattern`` cannot be combined with
+``--interactive``.
+
+Examples:
+
+.. code-block:: bash
+
+   ipyrf tcp client 127.0.0.1 --traffic-pattern trace.json
+   ipyrf udp client 127.0.0.1 --traffic-pattern rates.json --bandwidth 50M -l 1200
 
 Interactive mode
 ----------------
@@ -158,7 +218,10 @@ TCP-specific options:
 - ``tcp client ADDRESS``: Start a TCP client to connect to ``ADDRESS``
 - ``--congestion-control``: Select Linux TCP CC algorithm if available
 - ``--time``: Test duration (seconds), default 10
-- ``--bandwidth``: Target rate (e.g., ``50M``); used for pacing, optional
+- ``--bandwidth``: Target rate (e.g., ``50M``); pacing cap, also usable with
+  ``--traffic-pattern``
+- ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
+  (``trace`` or ``piecewise_rate``)
 - ``--set-mss``: Set approximate MSS via ``TCP_MAXSEG``
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
@@ -168,9 +231,14 @@ UDP-specific options:
 - ``udp server ADDRESS``: Start a UDP server on ``ADDRESS``
 - ``udp client ADDRESS``: Start a UDP client to ``ADDRESS``
 - ``--time``: Test duration (seconds), default 10
-- ``--bandwidth``: Target rate (required for UDP client; e.g., ``50M``)
+- ``--bandwidth``: Target rate (e.g., ``50M``); pacing cap, also usable with
+  ``--traffic-pattern``
+- ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
+  (``trace`` or ``piecewise_rate``)
 - ``-l/--length``: UDP payload length (default 1200)
 - ``--packet-record PATH``: UDP server: write received packet traces to a CSV file after the test
+- ``--inactivity-timeout SECONDS``: UDP server: exit after this many seconds
+  without receiving packets (default 2.0)
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
