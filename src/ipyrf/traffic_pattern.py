@@ -50,6 +50,16 @@ class TrafficPattern:
         """
         return None
 
+    def event_at_offset(self, wire_offset: int) -> Tuple[int, Optional[int]]:
+        """Return ``(event_id, remaining_bytes)`` for the next wire byte.
+
+        ``event_id`` is 1-based into the pattern's events or periods, or
+        ``0`` when unset (no pattern attribution). ``remaining_bytes`` is
+        how many more wire bytes belong to that event; ``None`` means no
+        event boundary applies.
+        """
+        return 0, None
+
 
 class TraceTrafficPattern(TrafficPattern):
     """Traffic pattern from discrete ``(timestamp, nbytes)`` events.
@@ -120,6 +130,14 @@ class TraceTrafficPattern(TrafficPattern):
                 return self._times[index]
             index += 1
         return None
+
+    def event_at_offset(self, wire_offset: int) -> Tuple[int, Optional[int]]:
+        if not self._cumulative or wire_offset < 0:
+            return 0, None
+        if wire_offset >= self._cumulative[-1]:
+            return 0, 0
+        index = bisect.bisect_right(self._cumulative, wire_offset)
+        return index + 1, self._cumulative[index] - wire_offset
 
 
 class PiecewiseRateTrafficPattern(TrafficPattern):
@@ -218,6 +236,21 @@ class PiecewiseRateTrafficPattern(TrafficPattern):
             if t <= period_end + 1e-12:
                 return max(t, elapsed)
         return None
+
+    def event_at_offset(self, wire_offset: int) -> Tuple[int, Optional[int]]:
+        if not self._starts or wire_offset < 0:
+            return 0, None
+        if wire_offset >= self._total_bytes:
+            return 0, 0
+        for i in range(len(self._starts)):
+            end = (
+                self._cum_at_start[i + 1]
+                if i + 1 < len(self._starts)
+                else self._total_bytes
+            )
+            if wire_offset < end:
+                return i + 1, end - wire_offset
+        return 0, 0
 
 
 SUPPORTED_TRACE_VERSION = 1

@@ -48,6 +48,13 @@ class BasePacingController:
             self.maybe_sleep(n_bytes)
         return n_bytes
 
+    def current_event_id(self) -> int:
+        """Return the 1-based traffic-pattern event id for the last send.
+
+        ``0`` means unset (no traffic pattern, or non-attributed traffic).
+        """
+        return 0
+
     def get_update_fields(self) -> Dict[str, float]:
         return {}
 
@@ -126,8 +133,10 @@ class TrafficPatternController(BasePacingController):
     pattern bitrate. With overhead 0 (UDP), payload size equals wire size.
 
     Sends are coalesced up to the ``n_bytes`` passed to :meth:`next_send`
-    (or the remaining wire budget after reserving overhead). Large bursts
-    are fragmented without delaying remaining bytes from the same event.
+    (or the remaining wire budget after reserving overhead), but do not
+    cross event/period boundaries so each send maps to one event id.
+    Large bursts are fragmented without delaying remaining bytes from the
+    same event.
 
     When ``bandwidth_bps`` is set, a :class:`Pacer` additionally caps how
     quickly available bytes may be transmitted (egress-rate limit). The
@@ -152,6 +161,7 @@ class TrafficPatternController(BasePacingController):
         self.start_mono_ns: Optional[int] = None
         self.bytes_sent = 0
         self.send_count = 0
+        self._event_id = 0
         self.tb: Optional[Pacer] = None
         if bandwidth_bps is not None:
             self.tb = Pacer(bandwidth_bps)
@@ -160,6 +170,10 @@ class TrafficPatternController(BasePacingController):
         self.start_mono_ns = time.monotonic_ns()
         self.bytes_sent = 0
         self.send_count = 0
+        self._event_id = 0
+
+    def current_event_id(self) -> int:
+        return self._event_id
 
     def _wire_used(self) -> int:
         return self.bytes_sent + self.send_count * self.header_overhead
@@ -176,13 +190,21 @@ class TrafficPatternController(BasePacingController):
             if remaining_wire <= 0:
                 return 0
 
+            event_id, rem_event = self.pattern.event_at_offset(wire_used)
+
+            # Cap wire budget to the current event when a framed send fits.
+            budget = remaining_wire
+            if rem_event is not None and rem_event > 0:
+                if self.header_overhead == 0 or rem_event > self.header_overhead:
+                    budget = min(budget, rem_event)
+
             # Reserve framing overhead out of the wire budget when present.
             if self.header_overhead > 0:
-                if remaining_wire <= self.header_overhead:
+                if budget <= self.header_overhead:
                     return 0
-                want = min(n_bytes, remaining_wire - self.header_overhead)
+                want = min(n_bytes, budget - self.header_overhead)
             else:
-                want = min(n_bytes, remaining_wire)
+                want = min(n_bytes, budget)
             if want <= 0:
                 return 0
 
@@ -192,6 +214,7 @@ class TrafficPatternController(BasePacingController):
                 self._pace(want)
                 self.bytes_sent += want
                 self.send_count += 1
+                self._event_id = event_id
                 return want
 
             need = need_wire - max(available_wire, 0)
@@ -199,18 +222,20 @@ class TrafficPatternController(BasePacingController):
             if next_t is None:
                 # Pattern has no further availability; flush any remaining
                 # payload that still fits in the wire budget.
+                flush_budget = budget
                 if self.header_overhead > 0:
                     flush = min(
                         n_bytes,
-                        max(0, remaining_wire - self.header_overhead),
+                        max(0, flush_budget - self.header_overhead),
                         max(0, available_wire - self.header_overhead),
                     )
                 else:
-                    flush = min(n_bytes, remaining_wire, max(0, available_wire))
+                    flush = min(n_bytes, flush_budget, max(0, available_wire))
                 if flush > 0:
                     self._pace(flush)
                     self.bytes_sent += flush
                     self.send_count += 1
+                    self._event_id = event_id
                     return flush
                 return 0
 

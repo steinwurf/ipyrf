@@ -8,8 +8,8 @@ from typing import Optional
 from .logger import Logger
 from .controllers import BasePacingController
 
-# TCP record header: latency flag, payload length, send timestamp (ns)
-TCP_HDR = struct.Struct("!BIQ")
+# TCP record header: latency flag, payload length, send timestamp (ns), event id
+TCP_HDR = struct.Struct("!BIQI")
 TCP_HDR_SIZE = TCP_HDR.size
 MAX_TCP_PAYLOAD = 64 * 1024
 DEFAULT_TCP_PAYLOAD = 1200
@@ -88,8 +88,8 @@ def server(
             recv_buffer.extend(data[:n])
 
             while len(recv_buffer) >= TCP_HDR_SIZE:
-                latency_flag, payload_len, timestamp_ns = TCP_HDR.unpack_from(
-                    recv_buffer
+                latency_flag, payload_len, timestamp_ns, _event_id = (
+                    TCP_HDR.unpack_from(recv_buffer)
                 )
                 if payload_len > MAX_TCP_PAYLOAD:
                     stop_reason = f"invalid payload length: {payload_len}"
@@ -211,7 +211,9 @@ def client(
             log.test(host, port, start)
 
         latency_flag = LATENCY_ENABLED if enable_latency else LATENCY_DISABLED
-        header = TCP_HDR.pack(latency_flag, to_send, time.time_ns())
+        header = TCP_HDR.pack(
+            latency_flag, to_send, time.time_ns(), controller.current_event_id()
+        )
 
         # Send header first
         header_offset = 0

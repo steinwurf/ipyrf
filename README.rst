@@ -136,6 +136,9 @@ Each event makes ``nbytes`` available at relative time ``timestamp`` (seconds
 from test start). Budgets are in socket bytes as counted by ipyrf (for TCP that
 includes the per-record header). Large events are fragmented into normal
 TCP/UDP send chunks without changing when those bytes become available.
+Sends do not cross event or period boundaries. Each UDP/TCP record carries a
+1-based ``event_id`` matching the event or period index in the JSON file
+(``0`` when not using a traffic pattern).
 
 **Piecewise rate** (``"type": "piecewise_rate"``): consecutive periods with a
 duration and bitrate (bits/s; numeric or strings like ``"2M"``). A bitrate of
@@ -289,12 +292,14 @@ UDP packet recording
 
 Pass ``--packet-record PATH`` to a UDP server to record one trace entry per
 received datagram (sequence number, sender timestamp, receiver timestamp,
-packet size). Records are packed into fixed-size in-memory chunks during the
-test so the receive path stays free of CSV I/O. Chunks are allocated before
-the test starts (about 20 s of 1 Gbit/s traffic by default) so rotation does
-not stall the receive loop. When the test ends, the CSV file (columns
-``sequence``, ``size_bytes``, ``transmitted_ns``, ``received_ns``) is written to
-``PATH``. Per-packet latency in nanoseconds is ``received_ns - transmitted_ns``.
+packet size, and traffic-pattern ``event_id``). Records are packed into
+fixed-size in-memory chunks during the test so the receive path stays free of
+CSV I/O. Chunks are allocated before the test starts (about 20 s of 1 Gbit/s
+traffic by default) so rotation does not stall the receive loop. When the test
+ends, the CSV file (columns ``sequence``, ``size_bytes``, ``transmitted_ns``,
+``received_ns``, ``event_id``) is written to ``PATH``. Per-packet latency in
+nanoseconds is ``received_ns - transmitted_ns``. ``event_id`` is ``0`` unless
+the client used ``--traffic-pattern``.
 
 Quick local test (two terminals):
 

@@ -76,16 +76,40 @@ def test_traffic_pattern_sends_small_trace_event_in_one_chunk():
 
 
 def test_traffic_pattern_header_overhead_reserves_wire_budget():
-    # 1200 payload + 13 header per send against a 1213-byte wire budget.
-    pattern = TraceTrafficPattern([(0.0, 1213)])
+    # 1200 payload + 17 header per send against a 1217-byte wire budget.
+    pattern = TraceTrafficPattern([(0.0, 1217)])
     controller = TrafficPatternController(
-        pattern, interval_seconds=1.0, header_overhead=13
+        pattern, interval_seconds=1.0, header_overhead=17
     )
     controller.start()
     assert controller.next_send(1200) == 1200
+    assert controller.current_event_id() == 1
     assert controller.should_stop()
     assert controller.bytes_sent == 1200
-    assert controller._wire_used() == 1213
+    assert controller._wire_used() == 1217
+
+
+def test_traffic_pattern_does_not_cross_event_boundary():
+    pattern = TraceTrafficPattern([(0.0, 500), (0.0, 700)])
+    controller = TrafficPatternController(pattern, interval_seconds=1.0)
+    controller.start()
+    assert controller.next_send(1200) == 500
+    assert controller.current_event_id() == 1
+    assert controller.next_send(1200) == 700
+    assert controller.current_event_id() == 2
+    assert controller.should_stop()
+
+
+def test_traffic_pattern_piecewise_event_ids():
+    # Two 1-second periods at 9600 bit/s => 1200 bytes each.
+    pattern = PiecewiseRateTrafficPattern([(1.0, 9600), (1.0, 9600)])
+    controller = TrafficPatternController(pattern, interval_seconds=1.0)
+    controller.start()
+    assert controller.next_send(1200) == 1200
+    assert controller.current_event_id() == 1
+    assert controller.next_send(1200) == 1200
+    assert controller.current_event_id() == 2
+    assert controller.should_stop()
 
 
 def test_static_pacing_charges_header_overhead(monkeypatch):
@@ -101,7 +125,8 @@ def test_static_pacing_charges_header_overhead(monkeypatch):
 
     monkeypatch.setattr("ipyrf.controllers.Pacer", FakePacer)
     controller = StaticPacingController(
-        10e6, duration_seconds=1.0, interval_seconds=1.0, header_overhead=13
+        10e6, duration_seconds=1.0, interval_seconds=1.0, header_overhead=17
     )
     assert controller.next_send(1200) == 1200
-    assert taken == [1213]
+    assert controller.current_event_id() == 0
+    assert taken == [1217]

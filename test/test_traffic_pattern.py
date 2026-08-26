@@ -70,6 +70,35 @@ def test_next_event_time_skips_zero_byte_events():
     assert pattern.next_event_time(0.0) == 1.0
 
 
+def test_trace_event_at_offset():
+    pattern = TraceTrafficPattern(
+        [
+            (0.0, 100),
+            (0.5, 0),
+            (1.0, 50),
+        ]
+    )
+    assert pattern.event_at_offset(0) == (1, 100)
+    assert pattern.event_at_offset(50) == (1, 50)
+    assert pattern.event_at_offset(100) == (3, 50)
+    assert pattern.event_at_offset(149) == (3, 1)
+    assert pattern.event_at_offset(150) == (0, 0)
+
+
+def test_piecewise_event_at_offset():
+    pattern = PiecewiseRateTrafficPattern(
+        [
+            (1.0, 800),  # 100 bytes
+            (1.0, 0),
+            (1.0, 800),  # 100 bytes
+        ]
+    )
+    assert pattern.event_at_offset(0) == (1, 100)
+    assert pattern.event_at_offset(99) == (1, 1)
+    assert pattern.event_at_offset(100) == (3, 100)
+    assert pattern.event_at_offset(200) == (0, 0)
+
+
 def test_rejects_negative_timestamp():
     with pytest.raises(TrafficPatternError, match="timestamp"):
         TraceTrafficPattern([(-0.1, 10)])

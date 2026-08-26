@@ -9,7 +9,7 @@ from .controllers import BasePacingController
 from .packet_recorder import PacketRecorder
 
 
-UDP_HDR = struct.Struct("!I Q I")
+UDP_HDR = struct.Struct("!I Q I I")
 FIN_FLAG = 0x1
 LATENCY_FLAG = 0x2
 
@@ -78,9 +78,9 @@ def server(
             inactivity_deadline = now + inactivity_timeout
 
             if n >= UDP_HDR.size:
-                seq, timestamp_ns, flags = UDP_HDR.unpack_from(recv_buffer)
+                seq, timestamp_ns, flags, event_id = UDP_HDR.unpack_from(recv_buffer)
             else:
-                seq, timestamp_ns, flags = (0, 0, 0)
+                seq, timestamp_ns, flags, event_id = (0, 0, 0, 0)
 
             # Check if client wants latency tracking enabled
             if (flags & LATENCY_FLAG) != 0:
@@ -95,7 +95,7 @@ def server(
 
             last_seq_seen = max(last_seq_seen, seq)
             if recorder is not None:
-                recorder.add(seq, timestamp_ns, now_ns, n)
+                recorder.add(seq, timestamp_ns, now_ns, n, event_id)
 
             # Calculate latency if enabled by client and we have a valid timestamp
             if latency_enabled and timestamp_ns > 0:
@@ -230,7 +230,14 @@ def client(
         try:
             if bytes_sent == 0:
                 log.test(host, port, start)
-            UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), flags)
+            UDP_HDR.pack_into(
+                payload,
+                0,
+                seq,
+                time.time_ns(),
+                flags,
+                controller.current_event_id(),
+            )
             n = sock.send(payload_view[:send_len])
         except Exception as e:
             stop_reason = f"error sending packet: {e}"
@@ -257,7 +264,7 @@ def client(
 
     for _ in range(3):
         fin_flags = FIN_FLAG | (LATENCY_FLAG if enable_latency else 0)
-        UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), fin_flags)
+        UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), fin_flags, 0)
         try:
             sock.send(payload)
         except Exception:
