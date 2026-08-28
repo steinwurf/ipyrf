@@ -25,7 +25,7 @@ jobs:
       - name: Waf Configure
         run: python3 waf configure
       - name: Waf Run Tests
-        run: sudo python3 waf --run_tests
+        run: python3 waf --run_tests
       - name: Change owner of local files so cleanup is possible for other workflows
         if: always()
         run: chown -R actions-runner:actions-runner .
