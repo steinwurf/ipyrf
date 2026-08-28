@@ -6,59 +6,29 @@ every change, see the Git log.
 
 Latest
 ------
+* Major: Changes has caused the header format to change, so older
+  versions of ipyrf cannot operate with the new version of ipyrf.
 * Patch: Added a GitHub Action to run the unit tests.
-* Minor: Added ``--loops N`` for TCP/UDP clients to replay a
-  ``--traffic-pattern`` N times. Each repetition starts when the previous
-  one ends; event ids refer to the original pattern and repeat each loop.
 * Minor: Added ``--bind-dev DEVICE`` for TCP/UDP clients to bind the
-  transmit socket to a network interface via Linux ``SO_BINDTODEVICE``
-  (typically requires ``CAP_NET_RAW`` or root).
-* Minor: UDP and TCP record headers now carry a traffic-pattern
-  ``event_id`` (1-based event/period index, or ``0`` when unset). Sends
-  stay within a single event or period so packets can be attributed via
-  ``--packet-record`` CSV (new ``event_id`` column).
+  transmit socket to a network interface.
+* Minor: Added ``--inactivity-timeout`` for UDP servers to configure how
+  long to wait without packets before exiting.
 * Minor: Added ``ipyrf generate video`` to synthesize encoded-video-like
   ``trace`` traffic patterns from FPS, a GOP frame-type pattern (I/P/B),
   and configurable frame sizes, or from real media via ``--from`` /
   ``--ffprobe-json`` (ffprobe ``-show_frames``). Output is normal
-  ``trace`` JSON for ``--traffic-pattern`` (no video-specific TCP/UDP
-  behavior).
-* Minor: Added ``--inactivity-timeout`` for UDP servers to configure how
-  long to wait without packets before exiting (default 2.0 seconds).
-* Minor: Added ``piecewise_rate`` traffic patterns: consecutive periods
-  with ``duration`` and ``bitrate`` (bits/s, or strings like ``"2M"``).
-  Bitrate ``0`` is idle. Loaded via the same ``--traffic-pattern`` JSON
-  interface as ``trace`` files.
-* Patch: Traffic-pattern sends now coalesce to the requested chunk size
-  instead of emitting tiny records as soon as any byte becomes
-  available. That was inflating TCP wire rates via per-record headers
-  (especially for low continuous bitrates).
+  ``trace`` JSON for ``--traffic-pattern``.
+* Minor: Added ``--traffic-pattern FILE`` for TCP/UDP clients. JSON types
+  are ``trace`` (timestamped byte events, optional ``metadata`` and
+  per-event ``tags``) and ``piecewise_rate`` (consecutive periods with
+  ``duration`` and ``bitrate`` in bits/s, or strings like ``"2M"``;
+  bitrate ``0`` is idle). Optional ``--loops N`` replays the pattern N
+  times; ``--bandwidth`` is an optional egress-rate cap. Record headers
+  and ``--packet-record`` CSV include ``event_id`` (1-based event/period
+  index, or ``0`` when unset). TCP records include the payload length so
+  variable-sized sends work.
 * Patch: TCP pacing now accounts for the per-record header so
-  ``--bandwidth`` and traffic-pattern bitrates match the measured
-  socket rate (UDP was already correct because the header is inside
-  the datagram).
-* Patch: Traffic-pattern scheduling now uses monotonic deadlines and
-  sleeps for most of each wait, with a short final sleep near the
-  deadline instead of busy-waiting.
-* Minor: ``--bandwidth`` can be combined with ``--traffic-pattern`` as an
-  optional egress-rate cap. The pattern still controls when bytes become
-  available; the pacer limits how fast those bytes may be sent.
-* Minor: Added ``--traffic-pattern FILE`` for TCP/UDP clients. The JSON
-  format is ``{"version": 1, "type": "trace", "events": [...]}`` with
-  optional ``metadata`` and per-event ``tags``. A traffic-pattern
-  controller releases event bytes at their relative timestamps and
-  fragments large events into normal send chunks. Existing
-  ``--bandwidth`` / ``--time`` behavior is unchanged when no pattern is
-  supplied.
-* Minor: Added a traffic-pattern abstraction (``TrafficPattern``) with a
-  ``TraceTrafficPattern`` that makes bytes available at relative
-  timestamps from a list of ``(timestamp, nbytes)`` events.
-* Minor: Extended BasePacingController with next_send() so custom
-  controllers can decide both when to send and how many bytes to send.
-  Static and interactive pacing keep their previous behavior.
-* Minor: Updated TCP framing to include the payload length in each
-  record so variable-sized sends work. Latency measurements still use
-  the per-record timestamp.
+  ``--bandwidth`` matches the measured socket rate.
 
 1.5.1
 -----
