@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from ipyrf.traffic_pattern import (
+    LoopedTrafficPattern,
     PiecewiseRateTrafficPattern,
     TrafficPatternError,
     TraceTrafficPattern,
@@ -401,3 +402,127 @@ def test_load_piecewise_rate_from_file(tmp_path: Path):
     path.write_text(json.dumps(_valid_piecewise_doc()), encoding="utf-8")
     pattern = load_traffic_pattern(path)
     assert pattern.total_bytes() == 500_000 + 3_750_000
+
+
+def test_looped_trace_repeats_timeline_and_event_ids():
+    inner = TraceTrafficPattern(
+        [
+            (0.0, 100),
+            (0.5, 200),
+        ],
+        metadata={"name": "burst"},
+    )
+    pattern = LoopedTrafficPattern(inner, 3)
+    assert pattern.inner is inner
+    assert pattern.loops == 3
+    assert pattern.metadata == {"name": "burst"}
+    assert pattern.duration() == pytest.approx(1.5)
+    assert pattern.total_bytes() == 900
+
+    assert pattern.cumulative_bytes(-0.1) == 0
+    assert pattern.cumulative_bytes(0.0) == 100
+    assert pattern.cumulative_bytes(0.49) == 100
+    # Last event of loop 0 and first event of loop 1 share t=0.5.
+    assert pattern.cumulative_bytes(0.5) == 400
+    assert pattern.cumulative_bytes(1.0) == 700
+    assert pattern.cumulative_bytes(1.5) == 900
+    assert pattern.cumulative_bytes(10.0) == 900
+
+    assert pattern.next_event_time(0.0) == pytest.approx(0.5)
+    assert pattern.next_event_time(0.5) == pytest.approx(1.0)
+    assert pattern.next_event_time(1.0) == pytest.approx(1.5)
+    assert pattern.next_event_time(1.5) is None
+
+    assert pattern.event_at_offset(0) == (1, 100)
+    assert pattern.event_at_offset(100) == (2, 200)
+    assert pattern.event_at_offset(300) == (1, 100)
+    assert pattern.event_at_offset(400) == (2, 200)
+    assert pattern.event_at_offset(899) == (2, 1)
+    assert pattern.event_at_offset(900) == (0, 0)
+
+
+def test_looped_trace_preserves_leading_gap():
+    inner = TraceTrafficPattern([(0.5, 100), (1.0, 50)])
+    pattern = LoopedTrafficPattern(inner, 2)
+    assert pattern.cumulative_bytes(0.0) == 0
+    assert pattern.cumulative_bytes(0.5) == 100
+    assert pattern.cumulative_bytes(1.0) == 150
+    assert pattern.cumulative_bytes(1.4) == 150
+    assert pattern.cumulative_bytes(1.5) == 250
+    assert pattern.next_event_time(1.0) == pytest.approx(1.5)
+    assert pattern.next_event_time(1.5) == pytest.approx(2.0)
+    assert pattern.next_event_time(2.0) is None
+
+
+def test_looped_piecewise_rate_concatenates_periods():
+    inner = PiecewiseRateTrafficPattern(
+        [
+            (1.0, 800),  # 100 bytes
+            (1.0, 0),
+        ]
+    )
+    pattern = LoopedTrafficPattern(inner, 2)
+    assert pattern.duration() == pytest.approx(4.0)
+    assert pattern.total_bytes() == 200
+    assert pattern.cumulative_bytes(0.5) == 50
+    assert pattern.cumulative_bytes(1.0) == 100
+    assert pattern.cumulative_bytes(1.5) == 100
+    assert pattern.cumulative_bytes(2.0) == 100
+    assert pattern.cumulative_bytes(2.5) == 150
+    assert pattern.cumulative_bytes(4.0) == 200
+
+    # Idle until the next loop; first byte of loop 1 accrues after t=2.0.
+    assert pattern.next_event_time(1.0, min_bytes=1) == pytest.approx(2.01)
+    assert pattern.next_event_time(2.0, min_bytes=50) == pytest.approx(2.5)
+    assert pattern.next_event_time(4.0) is None
+
+    assert pattern.event_at_offset(0) == (1, 100)
+    assert pattern.event_at_offset(99) == (1, 1)
+    assert pattern.event_at_offset(100) == (1, 100)
+    assert pattern.event_at_offset(200) == (0, 0)
+
+
+def test_looped_pattern_loops_one_is_identity():
+    inner = TraceTrafficPattern([(0.0, 10), (1.0, 20)])
+    pattern = LoopedTrafficPattern(inner, 1)
+    assert pattern.duration() == inner.duration()
+    assert pattern.total_bytes() == inner.total_bytes()
+    assert pattern.cumulative_bytes(0.5) == inner.cumulative_bytes(0.5)
+    assert pattern.next_event_time(0.0) == inner.next_event_time(0.0)
+    assert pattern.event_at_offset(5) == inner.event_at_offset(5)
+
+
+def test_looped_zero_duration_collapses_to_start():
+    inner = TraceTrafficPattern([(0.0, 100)])
+    pattern = LoopedTrafficPattern(inner, 4)
+    assert pattern.duration() == 0.0
+    assert pattern.total_bytes() == 400
+    assert pattern.cumulative_bytes(-0.1) == 0
+    assert pattern.cumulative_bytes(0.0) == 400
+    assert pattern.next_event_time(0.0) is None
+    assert pattern.event_at_offset(0) == (1, 100)
+    assert pattern.event_at_offset(250) == (1, 50)
+    assert pattern.event_at_offset(400) == (0, 0)
+
+
+def test_looped_pattern_rejects_non_positive_loops():
+    inner = TraceTrafficPattern([(0.0, 1)])
+    with pytest.raises(TrafficPatternError, match="loops"):
+        LoopedTrafficPattern(inner, 0)
+    with pytest.raises(TrafficPatternError, match="loops"):
+        LoopedTrafficPattern(inner, -2)
+    with pytest.raises(TrafficPatternError, match="loops"):
+        LoopedTrafficPattern(inner, 1.5)  # type: ignore[arg-type]
+
+
+def test_parse_loops():
+    from argparse import ArgumentTypeError
+
+    from ipyrf.cli import parse_loops
+
+    assert parse_loops("1") == 1
+    assert parse_loops("12") == 12
+    with pytest.raises(ArgumentTypeError, match=">= 1"):
+        parse_loops("0")
+    with pytest.raises(ArgumentTypeError, match="invalid integer"):
+        parse_loops("nope")

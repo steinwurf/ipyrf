@@ -169,7 +169,7 @@ class InteractiveController(BasePacingController):
                 if self.tb is None:
                     self.tb = Pacer(self.target_bps)
                 else:
-                    self.tb.set_rate_bps(self.target_bps)
+                    self.tb.set_bandwidth_bps(self.target_bps)
 
     def unlimited(self):
         with self.lock:
@@ -189,7 +189,7 @@ class InteractiveController(BasePacingController):
                 self.target_bps = max(1e3, self.target_bps * scale)
             else:
                 self.target_bps = max(1e3, self.target_bps + delta_bps)
-            self.tb.set_rate_bps(self.target_bps)
+            self.tb.set_bandwidth_bps(self.target_bps)
             return self.target_bps
 
     def request_stop(self):

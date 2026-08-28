@@ -6,6 +6,9 @@ every change, see the Git log.
 
 Latest
 ------
+* Minor: Added ``--loops N`` for TCP/UDP clients to replay a
+  ``--traffic-pattern`` N times. Each repetition starts when the previous
+  one ends; event ids refer to the original pattern and repeat each loop.
 * Minor: Added ``--bind-dev DEVICE`` for TCP/UDP clients to bind the
   transmit socket to a network interface via Linux ``SO_BINDTODEVICE``
   (typically requires ``CAP_NET_RAW`` or root).

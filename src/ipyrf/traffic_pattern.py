@@ -253,6 +253,92 @@ class PiecewiseRateTrafficPattern(TrafficPattern):
         return 0, 0
 
 
+class LoopedTrafficPattern(TrafficPattern):
+    """Repeat an inner :class:`TrafficPattern` a fixed number of times.
+
+    Each repetition starts when the previous one ends (at the inner
+    pattern's :meth:`duration`). Event ids refer to the inner pattern and
+    repeat each loop. A zero-duration inner pattern (all bytes at ``t=0``)
+    collapses every repetition to the start.
+    """
+
+    def __init__(self, pattern: TrafficPattern, loops: int):
+        if not isinstance(loops, int) or isinstance(loops, bool) or loops < 1:
+            raise TrafficPatternError(f"loops must be an integer >= 1, got {loops!r}")
+        self._inner = pattern
+        self._loops = loops
+        inner_meta = getattr(pattern, "metadata", None)
+        self.metadata: Dict[str, Any] = dict(inner_meta) if inner_meta else {}
+
+    @property
+    def inner(self) -> TrafficPattern:
+        return self._inner
+
+    @property
+    def loops(self) -> int:
+        return self._loops
+
+    def duration(self) -> float:
+        return self._inner.duration() * self._loops
+
+    def total_bytes(self) -> int:
+        return self._inner.total_bytes() * self._loops
+
+    def cumulative_bytes(self, elapsed: float) -> int:
+        inner_total = self._inner.total_bytes()
+        if self._loops == 1:
+            return self._inner.cumulative_bytes(elapsed)
+        if elapsed < 0:
+            return 0
+        period = self._inner.duration()
+        if period <= 0:
+            return inner_total * self._loops
+        completed = int(elapsed // period)
+        if completed >= self._loops:
+            return inner_total * self._loops
+        t = elapsed - completed * period
+        return completed * inner_total + self._inner.cumulative_bytes(t)
+
+    def next_event_time(
+        self, elapsed: float, min_bytes: int = 1
+    ) -> Optional[float]:
+        period = self._inner.duration()
+        if self._loops == 1 or period <= 0:
+            return self._inner.next_event_time(elapsed, min_bytes)
+
+        if elapsed < 0:
+            elapsed = 0.0
+        if self.cumulative_bytes(elapsed) >= self.total_bytes():
+            return None
+
+        loop_index = int(elapsed // period)
+        if loop_index >= self._loops:
+            return None
+
+        t = elapsed - loop_index * period
+        inner_next = self._inner.next_event_time(t, min_bytes)
+        if inner_next is not None:
+            return loop_index * period + inner_next
+
+        for next_loop in range(loop_index + 1, self._loops):
+            start = next_loop * period
+            if self._inner.cumulative_bytes(0.0) > 0:
+                return start
+            inner_next = self._inner.next_event_time(0.0, min_bytes)
+            if inner_next is not None:
+                return start + inner_next
+        return None
+
+    def event_at_offset(self, wire_offset: int) -> Tuple[int, Optional[int]]:
+        inner_total = self._inner.total_bytes()
+        if inner_total <= 0 or wire_offset < 0:
+            return 0, None
+        loop_index = wire_offset // inner_total
+        if loop_index >= self._loops:
+            return 0, 0
+        return self._inner.event_at_offset(wire_offset % inner_total)
+
+
 SUPPORTED_TRACE_VERSION = 1
 SUPPORTED_TYPES = ("trace", "piecewise_rate")
 

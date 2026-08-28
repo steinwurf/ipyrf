@@ -157,7 +157,6 @@ class TrafficPatternController(BasePacingController):
             interval_seconds=interval_seconds, header_overhead=header_overhead
         )
         self.pattern = pattern
-        self.bandwidth_bps = bandwidth_bps
         self.start_mono_ns: Optional[int] = None
         self.bytes_sent = 0
         self.send_count = 0
@@ -190,13 +189,13 @@ class TrafficPatternController(BasePacingController):
             if remaining_wire <= 0:
                 return 0
 
-            event_id, rem_event = self.pattern.event_at_offset(wire_used)
+            event_id, remaining_event = self.pattern.event_at_offset(wire_used)
 
             # Cap wire budget to the current event when a framed send fits.
             budget = remaining_wire
-            if rem_event is not None and rem_event > 0:
-                if self.header_overhead == 0 or rem_event > self.header_overhead:
-                    budget = min(budget, rem_event)
+            if remaining_event is not None and remaining_event > 0:
+                if self.header_overhead == 0 or remaining_event > self.header_overhead:
+                    budget = min(budget, remaining_event)
 
             # Reserve framing overhead out of the wire budget when present.
             if self.header_overhead > 0:
@@ -254,8 +253,8 @@ class TrafficPatternController(BasePacingController):
             "traffic_pattern_bytes": float(self.pattern.total_bytes()),
             "traffic_pattern_duration": float(self.pattern.duration()),
         }
-        if self.bandwidth_bps is not None:
-            fields["target_bandwidth_bps"] = float(self.bandwidth_bps)
+        if self.tb is not None:
+            fields["target_bandwidth_bps"] = float(self.tb.bandwidth_bps)
         return fields
 
     def _pace(self, n_bytes: int) -> None:

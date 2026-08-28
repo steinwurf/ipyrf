@@ -7,7 +7,11 @@ from ipyrf.controllers import (
     StaticPacingController,
     TrafficPatternController,
 )
-from ipyrf.traffic_pattern import PiecewiseRateTrafficPattern, TraceTrafficPattern
+from ipyrf.traffic_pattern import (
+    LoopedTrafficPattern,
+    PiecewiseRateTrafficPattern,
+    TraceTrafficPattern,
+)
 
 
 def test_base_next_send_returns_requested_bytes():
@@ -110,6 +114,41 @@ def test_traffic_pattern_piecewise_event_ids():
     assert controller.next_send(1200) == 1200
     assert controller.current_event_id() == 2
     assert controller.should_stop()
+
+
+def test_traffic_pattern_loops_repeats_event_ids():
+    inner = TraceTrafficPattern([(0.0, 100), (0.0, 200)])
+    pattern = LoopedTrafficPattern(inner, 2)
+    controller = TrafficPatternController(pattern, interval_seconds=1.0)
+    controller.start()
+    assert controller.next_send(1200) == 100
+    assert controller.current_event_id() == 1
+    assert controller.next_send(1200) == 200
+    assert controller.current_event_id() == 2
+    assert controller.next_send(1200) == 100
+    assert controller.current_event_id() == 1
+    assert controller.next_send(1200) == 200
+    assert controller.current_event_id() == 2
+    assert controller.should_stop()
+    assert controller.bytes_sent == 600
+
+
+def test_traffic_pattern_loops_across_time():
+    inner = TraceTrafficPattern([(0.0, 100), (0.05, 100)])
+    pattern = LoopedTrafficPattern(inner, 2)
+    controller = TrafficPatternController(pattern, interval_seconds=1.0)
+    controller.start()
+    sizes = []
+    ids = []
+    while not controller.should_stop():
+        n = controller.next_send(1200)
+        if n <= 0:
+            break
+        sizes.append(n)
+        ids.append(controller.current_event_id())
+    assert sizes == [100, 100, 100, 100]
+    assert ids == [1, 2, 1, 2]
+    assert controller.bytes_sent == 400
 
 
 def test_static_pacing_charges_header_overhead(monkeypatch):

@@ -6,7 +6,7 @@ import time
 
 def sleep_precise(sleep_time_s: float) -> None:
     if sleep_time_s <= 0:
-            return
+        return
     if sleep_time_s > 0.5:
         time.sleep(sleep_time_s)
     else:

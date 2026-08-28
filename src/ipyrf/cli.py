@@ -9,7 +9,11 @@ from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
 from .interactive import InteractiveController
 from .controllers import StaticPacingController, TrafficPatternController
-from .traffic_pattern import TrafficPatternError, load_traffic_pattern
+from .traffic_pattern import (
+    LoopedTrafficPattern,
+    TrafficPatternError,
+    load_traffic_pattern,
+)
 from .video_trace import (
     VideoTraceError,
     generate_video_trace,
@@ -25,6 +29,16 @@ def parse_traffic_pattern_arg(path: str):
         return load_traffic_pattern(path)
     except TrafficPatternError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def parse_loops(value: str) -> int:
+    try:
+        loops = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from None
+    if loops < 1:
+        raise argparse.ArgumentTypeError("loops must be >= 1")
+    return loops
 
 
 def main():
@@ -190,6 +204,16 @@ def main():
         metavar="FILE",
         help="JSON traffic pattern file (trace or piecewise_rate)",
     )
+    tcp_cli.add_argument(
+        "--loops",
+        type=parse_loops,
+        default=1,
+        metavar="N",
+        help=(
+            "Repeat --traffic-pattern this many times (default: 1). "
+            "Each repetition starts when the previous one ends"
+        ),
+    )
 
     udp_parser = subp.add_parser("udp", help="UDP mode")
     udp_sub = udp_parser.add_subparsers(dest="role", required=True)
@@ -247,8 +271,25 @@ def main():
         metavar="FILE",
         help="JSON traffic pattern file (trace or piecewise_rate)",
     )
+    udp_cli.add_argument(
+        "--loops",
+        type=parse_loops,
+        default=1,
+        metavar="N",
+        help=(
+            "Repeat --traffic-pattern this many times (default: 1). "
+            "Each repetition starts when the previous one ends"
+        ),
+    )
 
     args = p.parse_args()
+
+    loops = getattr(args, "loops", 1)
+    pattern = getattr(args, "traffic_pattern", None)
+    if loops != 1 and pattern is None:
+        p.error("--loops requires --traffic-pattern")
+    if pattern is not None and loops != 1:
+        args.traffic_pattern = LoopedTrafficPattern(pattern, loops)
 
     if args.protocol == "generate":
         if args.generate_kind == "video":

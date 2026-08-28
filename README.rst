@@ -96,6 +96,7 @@ TCP client:
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --set-mss 1400
    ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
+   ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --loops 3
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --bind-dev eth0
 
 UDP server:
@@ -112,6 +113,7 @@ UDP client (with bandwidth cap and optional payload size):
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 -l 1200
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
+   ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --loops 3
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --bind-dev eth0
 
 Traffic patterns
@@ -165,14 +167,17 @@ each period (socket bytes, matching measured rates). ``metadata`` and
 per-event/period ``tags`` are optional. Optionally
 pass ``--bandwidth`` together with ``--traffic-pattern`` to cap egress rate: the
 pattern decides when bytes become available, and the pacer limits how quickly
-they may be transmitted. ``--traffic-pattern`` cannot be combined with
-``--interactive``.
+they may be transmitted. Pass ``--loops N`` to replay the pattern N times;
+each repetition starts when the previous one ends (at the pattern's
+duration). Event ids refer to the original file and repeat each loop.
+``--traffic-pattern`` cannot be combined with ``--interactive``.
 
 Examples:
 
 .. code-block:: bash
 
    ipyrf tcp client 127.0.0.1 --traffic-pattern trace.json
+   ipyrf tcp client 127.0.0.1 --traffic-pattern trace.json --loops 3
    ipyrf udp client 127.0.0.1 --traffic-pattern rates.json --bandwidth 50M -l 1200
 
 Synthetic video traces
@@ -259,6 +264,7 @@ TCP-specific options:
   ``--traffic-pattern``
 - ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
   (``trace`` or ``piecewise_rate``)
+- ``--loops N``: Replay ``--traffic-pattern`` N times (default 1)
 - ``--set-mss``: Set approximate MSS via ``TCP_MAXSEG``
 - ``--bind-dev DEVICE``: Bind the client socket to a network interface
   (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
@@ -274,6 +280,7 @@ UDP-specific options:
   ``--traffic-pattern``
 - ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
   (``trace`` or ``piecewise_rate``)
+- ``--loops N``: Replay ``--traffic-pattern`` N times (default 1)
 - ``-l/--length``: UDP payload length (default 1200)
 - ``--packet-record PATH``: UDP server: write received packet traces to a CSV file after the test
 - ``--inactivity-timeout SECONDS``: UDP server: exit after this many seconds

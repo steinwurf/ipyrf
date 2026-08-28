@@ -3,8 +3,8 @@ import time
 
 
 class Pacer:
-    def __init__(self, rate_bps: float):
-        self.rate_bps = rate_bps / 8.0  # bits/s → bytes/s
+    def __init__(self, bandwidth_bps: float):
+        self.bandwidth_bps = bandwidth_bps
         self.next_eligible = None  # monotonic seconds
 
     def take(self, n_bytes: int) -> float:
@@ -13,15 +13,16 @@ class Pacer:
         to maintain `rate_bps`. 0.0 means go now.
         """
         now = time.monotonic()
+        bytes_per_second = self.bandwidth_bps / 8.0  # bits/s → bytes/s
         if self.next_eligible is None or now > self.next_eligible:
             # No accumulated credit: start from now
-            self.next_eligible = now + n_bytes / self.rate_bps
+            self.next_eligible = now + n_bytes / bytes_per_second
 
         wait = max(0.0, self.next_eligible - now)
         # Schedule the next slot spaced by the time this chunk 'costs'
-        self.next_eligible += n_bytes / self.rate_bps
+        self.next_eligible += n_bytes / bytes_per_second
 
         return wait
 
-    def set_rate_bps(self, new_rate_bps: float):
-        self.rate_bps = new_rate_bps / 8.0
+    def set_bandwidth_bps(self, new_bandwidth_bps: float):
+        self.bandwidth_bps = new_bandwidth_bps
