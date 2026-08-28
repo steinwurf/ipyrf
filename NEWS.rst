@@ -6,6 +6,7 @@ every change, see the Git log.
 
 Latest
 ------
+* Patch: Added a GitHub Action to run the unit tests.
 * Minor: Added ``--loops N`` for TCP/UDP clients to replay a
   ``--traffic-pattern`` N times. Each repetition starts when the previous
   one ends; event ids refer to the original pattern and repeat each loop.

@@ -1,0 +1,37 @@
+name: Unit Tests
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+jobs:
+  unit_tests:
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+    runs-on:
+      - self-hosted
+      - vm
+      - ubuntu-current
+    name: Unit Tests
+    container:
+      image: ghcr.io/steinwurf/integration-test:1.1.0
+      options: --user 0:0 --privileged
+    steps:
+      - name: Ensure correct owner of repository
+        run: chown -R actions-runner:actions-runner .
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Waf Configure
+        run: python3 waf configure
+      - name: Waf Run Tests
+        run: sudo python3 waf --run_tests
+      - name: Change owner of local files so cleanup is possible for other workflows
+        if: always()
+        run: chown -R actions-runner:actions-runner .
+      - name: Print Failure Message
+        if: failure()
+        run: echo "❌ Unit Tests Failed! Check the logs for details."
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
