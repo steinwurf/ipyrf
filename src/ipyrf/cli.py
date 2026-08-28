@@ -2,12 +2,43 @@
 
 from __future__ import annotations
 import argparse
+import sys
 
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
 from .interactive import InteractiveController
-from .controllers import StaticPacingController
+from .controllers import StaticPacingController, TrafficPatternController
+from .traffic_pattern import (
+    LoopedTrafficPattern,
+    TrafficPatternError,
+    load_traffic_pattern,
+)
+from .video_trace import (
+    VideoTraceError,
+    generate_video_trace,
+    generate_video_trace_from_ffprobe,
+    load_ffprobe_json,
+    run_ffprobe,
+    write_trace_document,
+)
+
+
+def parse_traffic_pattern_arg(path: str):
+    try:
+        return load_traffic_pattern(path)
+    except TrafficPatternError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def parse_loops(value: str) -> int:
+    try:
+        loops = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from None
+    if loops < 1:
+        raise argparse.ArgumentTypeError("loops must be >= 1")
+    return loops
 
 
 def main():
@@ -27,6 +58,85 @@ def main():
     common.add_argument("--interval", type=float, default=1.0, help="Stats interval")
 
     subp = p.add_subparsers(dest="protocol", required=True)
+
+    gen_parser = subp.add_parser(
+        "generate", help="Generate traffic-pattern JSON files"
+    )
+    gen_sub = gen_parser.add_subparsers(dest="generate_kind", required=True)
+    video_parser = gen_sub.add_parser(
+        "video",
+        help=(
+            "Encoded-video-like trace (synthetic or from ffprobe); "
+            "writes normal trace JSON"
+        ),
+    )
+    video_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="FILE",
+        help="Write the generated trace JSON to FILE",
+    )
+    video_source = video_parser.add_mutually_exclusive_group()
+    video_source.add_argument(
+        "--from",
+        dest="from_media",
+        metavar="MEDIA",
+        help="Run ffprobe on MEDIA and convert video frames to a trace",
+    )
+    video_source.add_argument(
+        "--ffprobe-json",
+        metavar="FILE",
+        help=(
+            "Use a saved ffprobe -show_frames JSON dump instead of "
+            "running ffprobe"
+        ),
+    )
+    video_parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="Synthetic mode: frames per second (default: 30)",
+    )
+    video_parser.add_argument(
+        "--gop",
+        default="IPBB",
+        help=(
+            "Synthetic mode: GOP frame-type pattern using I/P/B "
+            "characters (default: IPBB)"
+        ),
+    )
+    video_parser.add_argument(
+        "--i-size",
+        type=int,
+        default=40_000,
+        metavar="BYTES",
+        help="Synthetic mode: I-frame size in bytes (default: 40000)",
+    )
+    video_parser.add_argument(
+        "--p-size",
+        type=int,
+        default=8_000,
+        metavar="BYTES",
+        help="Synthetic mode: P-frame size in bytes (default: 8000)",
+    )
+    video_parser.add_argument(
+        "--b-size",
+        type=int,
+        default=2_000,
+        metavar="BYTES",
+        help="Synthetic mode: B-frame size in bytes (default: 2000)",
+    )
+    video_parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help=(
+            "Synthetic mode: pattern length in seconds (default: 10). "
+            "With --from/--ffprobe-json: optional truncate to this many "
+            "seconds from the first frame"
+        ),
+    )
 
     tcp_parser = subp.add_parser("tcp", help="TCP mode")
     tcp_sub = tcp_parser.add_subparsers(dest="role", required=True)
@@ -71,14 +181,38 @@ def main():
         action="store_true",
         help="Enable latency tracking on the server",
     )
+    tcp_cli.add_argument(
+        "--bind-dev",
+        metavar="DEVICE",
+        help=(
+            "Bind the client socket to DEVICE (Linux SO_BINDTODEVICE; "
+            "typically requires CAP_NET_RAW or root)"
+        ),
+    )
 
-    # Time and interactive mode are mutually exclusive
+    # Time, interactive mode, and traffic pattern are mutually exclusive
     tcp_time_group = tcp_cli.add_mutually_exclusive_group()
     tcp_time_group.add_argument(
         "--time", type=int, default=10, help="Test duration in seconds"
     )
     tcp_time_group.add_argument(
         "--interactive", action="store_true", help="Run client in interactive mode"
+    )
+    tcp_time_group.add_argument(
+        "--traffic-pattern",
+        type=parse_traffic_pattern_arg,
+        metavar="FILE",
+        help="JSON traffic pattern file (trace or piecewise_rate)",
+    )
+    tcp_cli.add_argument(
+        "--loops",
+        type=parse_loops,
+        default=1,
+        metavar="N",
+        help=(
+            "Repeat --traffic-pattern this many times (default: 1). "
+            "Each repetition starts when the previous one ends"
+        ),
     )
 
     udp_parser = subp.add_parser("udp", help="UDP mode")
@@ -92,6 +226,13 @@ def main():
         "--packet-record",
         metavar="PATH",
         help="Write received UDP packet traces to a CSV file after the test",
+    )
+    udp_srv.add_argument(
+        "--inactivity-timeout",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="Exit after this many seconds without receiving packets (default: 2.0)",
     )
 
     udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")
@@ -107,8 +248,16 @@ def main():
         action="store_true",
         help="Enable latency tracking on the server",
     )
+    udp_cli.add_argument(
+        "--bind-dev",
+        metavar="DEVICE",
+        help=(
+            "Bind the client socket to DEVICE (Linux SO_BINDTODEVICE; "
+            "typically requires CAP_NET_RAW or root)"
+        ),
+    )
 
-    # Time and interactive mode are mutually exclusive
+    # Time, interactive mode, and traffic pattern are mutually exclusive
     udp_time_group = udp_cli.add_mutually_exclusive_group()
     udp_time_group.add_argument(
         "--time", type=int, default=10, help="Test duration in seconds"
@@ -116,8 +265,74 @@ def main():
     udp_time_group.add_argument(
         "--interactive", action="store_true", help="Run client in interactive mode"
     )
+    udp_time_group.add_argument(
+        "--traffic-pattern",
+        type=parse_traffic_pattern_arg,
+        metavar="FILE",
+        help="JSON traffic pattern file (trace or piecewise_rate)",
+    )
+    udp_cli.add_argument(
+        "--loops",
+        type=parse_loops,
+        default=1,
+        metavar="N",
+        help=(
+            "Repeat --traffic-pattern this many times (default: 1). "
+            "Each repetition starts when the previous one ends"
+        ),
+    )
 
     args = p.parse_args()
+
+    loops = getattr(args, "loops", 1)
+    pattern = getattr(args, "traffic_pattern", None)
+    if loops != 1 and pattern is None:
+        p.error("--loops requires --traffic-pattern")
+    if pattern is not None and loops != 1:
+        args.traffic_pattern = LoopedTrafficPattern(pattern, loops)
+
+    if args.protocol == "generate":
+        if args.generate_kind == "video":
+            try:
+                if args.from_media is not None:
+                    probe = run_ffprobe(args.from_media)
+                    doc = generate_video_trace_from_ffprobe(
+                        probe,
+                        duration=args.duration,
+                        source=str(args.from_media),
+                    )
+                elif args.ffprobe_json is not None:
+                    probe = load_ffprobe_json(args.ffprobe_json)
+                    doc = generate_video_trace_from_ffprobe(
+                        probe,
+                        duration=args.duration,
+                        source=str(args.ffprobe_json),
+                    )
+                else:
+                    doc = generate_video_trace(
+                        fps=args.fps,
+                        gop=args.gop,
+                        i_size=args.i_size,
+                        p_size=args.p_size,
+                        b_size=args.b_size,
+                        duration=(
+                            10.0 if args.duration is None else args.duration
+                        ),
+                    )
+                write_trace_document(args.output, doc)
+            except VideoTraceError as e:
+                print(f"error: {e}", file=sys.stderr)
+                raise SystemExit(2) from e
+            meta = doc["metadata"]
+            detail = meta.get("gop") or meta.get("source") or meta.get(
+                "generator"
+            )
+            print(
+                f"Wrote {len(doc['events'])} frame events "
+                f"({meta.get('frames')} frames, {detail}) to {args.output}"
+            )
+            return
+        raise ValueError(f"Unknown generate kind: {args.generate_kind}")
 
     if args.role not in ("server", "client"):
         raise ValueError(f"Invalid role: {args.role}. Must be 'server' or 'client'.")
@@ -133,17 +348,27 @@ def main():
                 args.port,
                 args.interval,
                 packet_record_path=args.packet_record,
+                inactivity_timeout=args.inactivity_timeout,
             )
         else:
-            bw = (
-                args.bandwidth or parse_bandwidth("50M")
-                if args.interactive
-                else args.bandwidth
-            )
-            if args.interactive:
-                controller = InteractiveController(bw, args.interval)
+            if getattr(args, "traffic_pattern", None) is not None:
+                controller = TrafficPatternController(
+                    args.traffic_pattern,
+                    args.interval,
+                    bandwidth_bps=args.bandwidth,
+                )
             else:
-                controller = StaticPacingController(bw, args.time, args.interval)
+                bw = (
+                    args.bandwidth or parse_bandwidth("50M")
+                    if args.interactive
+                    else args.bandwidth
+                )
+                if args.interactive:
+                    controller = InteractiveController(bw, args.interval)
+                else:
+                    controller = StaticPacingController(
+                        bw, args.time, args.interval
+                    )
             udp.client(
                 log,
                 args.address,
@@ -151,6 +376,7 @@ def main():
                 args.length,
                 controller,
                 args.enable_latency,
+                bind_dev=args.bind_dev,
             )
 
     else:
@@ -163,14 +389,30 @@ def main():
                 args.congestion_control,
             )
         else:
-            if args.interactive:
+            # TCP record header is sent in addition to the payload returned by
+            # next_send(); charge it so measured rates match --bandwidth /
+            # traffic-pattern bitrates. UDP includes its header in the datagram.
+            tcp_overhead = tcp.TCP_HDR_SIZE
+            if getattr(args, "traffic_pattern", None) is not None:
+                controller = TrafficPatternController(
+                    args.traffic_pattern,
+                    args.interval,
+                    bandwidth_bps=args.bandwidth,
+                    header_overhead=tcp_overhead,
+                )
+            elif args.interactive:
                 # If no bandwidth provided, controller will act as unlimited until adjusted
-                controller = InteractiveController(args.bandwidth, args.interval)
+                controller = InteractiveController(
+                    args.bandwidth,
+                    args.interval,
+                    header_overhead=tcp_overhead,
+                )
             else:
                 controller = StaticPacingController(
                     args.bandwidth,
                     args.time,
                     args.interval,
+                    header_overhead=tcp_overhead,
                 )
             tcp.client(
                 log,
@@ -180,6 +422,7 @@ def main():
                 args.set_mss,
                 controller,
                 args.enable_latency,
+                bind_dev=args.bind_dev,
             )
 
     if controller is not None:

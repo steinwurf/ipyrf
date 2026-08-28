@@ -7,9 +7,10 @@ from typing import Optional, Tuple
 from .logger import Logger
 from .controllers import BasePacingController
 from .packet_recorder import PacketRecorder
+from .utils import bind_to_device
 
 
-UDP_HDR = struct.Struct("!I Q I")
+UDP_HDR = struct.Struct("!I Q I I")
 FIN_FLAG = 0x1
 LATENCY_FLAG = 0x2
 
@@ -20,11 +21,12 @@ def server(
     port: int,
     interval_seconds: float,
     packet_record_path: Optional[str] = None,
+    inactivity_timeout: float = 2.0,
 ):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((bind_addr, port))
-    sock.settimeout(2.0)
+    sock.settimeout(inactivity_timeout)
 
     active = False
     start = 0.0
@@ -74,12 +76,12 @@ def server(
                 start = now
                 last_ts = now
                 src_peer = peer
-            inactivity_deadline = now + 2.0
+            inactivity_deadline = now + inactivity_timeout
 
             if n >= UDP_HDR.size:
-                seq, timestamp_ns, flags = UDP_HDR.unpack_from(recv_buffer)
+                seq, timestamp_ns, flags, event_id = UDP_HDR.unpack_from(recv_buffer)
             else:
-                seq, timestamp_ns, flags = (0, 0, 0)
+                seq, timestamp_ns, flags, event_id = (0, 0, 0, 0)
 
             # Check if client wants latency tracking enabled
             if (flags & LATENCY_FLAG) != 0:
@@ -94,7 +96,7 @@ def server(
 
             last_seq_seen = max(last_seq_seen, seq)
             if recorder is not None:
-                recorder.add(seq, timestamp_ns, now_ns, n)
+                recorder.add(seq, timestamp_ns, now_ns, n, event_id)
 
             # Calculate latency if enabled by client and we have a valid timestamp
             if latency_enabled and timestamp_ns > 0:
@@ -189,11 +191,14 @@ def client(
     payload_len: int,
     controller: BasePacingController,
     enable_latency: bool = False,
+    bind_dev: Optional[str] = None,
 ):
     if payload_len < UDP_HDR.size:
         payload_len = UDP_HDR.size
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if bind_dev is not None:
+        bind_to_device(sock, bind_dev)
     sock.connect((host, port))
 
     log.start(host, port)
@@ -213,17 +218,31 @@ def client(
     # Start timing if the controller has a duration
     controller.start()
 
+    payload_view = memoryview(payload)
+
     while not controller.should_stop():
         flags = LATENCY_FLAG if enable_latency else 0
-        
-        if controller.is_pacing():
-            controller.maybe_sleep(payload_len)
-        
+
+        send_len = controller.next_send(payload_len)
+        if send_len <= 0:
+            continue
+        if send_len < UDP_HDR.size:
+            send_len = UDP_HDR.size
+        elif send_len > payload_len:
+            send_len = payload_len
+
         try:
             if bytes_sent == 0:
                 log.test(host, port, start)
-            UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), flags)
-            n = sock.send(payload)
+            UDP_HDR.pack_into(
+                payload,
+                0,
+                seq,
+                time.time_ns(),
+                flags,
+                controller.current_event_id(),
+            )
+            n = sock.send(payload_view[:send_len])
         except Exception as e:
             stop_reason = f"error sending packet: {e}"
             break
@@ -249,7 +268,7 @@ def client(
 
     for _ in range(3):
         fin_flags = FIN_FLAG | (LATENCY_FLAG if enable_latency else 0)
-        UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), fin_flags)
+        UDP_HDR.pack_into(payload, 0, seq, time.time_ns(), fin_flags, 0)
         try:
             sock.send(payload)
         except Exception:

@@ -2,6 +2,25 @@ from __future__ import annotations
 import argparse
 import pathlib
 import socket
+import time
+
+def sleep_precise(sleep_time_s: float) -> None:
+    if sleep_time_s <= 0:
+        return
+    if sleep_time_s > 0.5:
+        time.sleep(sleep_time_s)
+    else:
+        # Busy wait for very short sleeps
+        end = time.perf_counter() + sleep_time_s
+        while time.perf_counter() < end:
+            pass
+
+def sleep_until_ns(deadline_ns: int) -> None:
+    now_ns = time.monotonic_ns()
+    remaining_ns = deadline_ns - now_ns
+    if remaining_ns <= 0:
+        return
+    sleep_precise(remaining_ns / 1_000_000_000)
 
 
 def tcp_congestion_control_info():
@@ -58,6 +77,29 @@ def parse_ip(s: str) -> str:
     except OSError:
         pass
     raise argparse.ArgumentTypeError(f"Invalid IP address: {s}")
+
+
+def bind_to_device(sock: socket.socket, device: str) -> None:
+    """Bind ``sock`` to a network interface via ``SO_BINDTODEVICE`` (Linux).
+
+    Requires ``CAP_NET_RAW`` (or root) on most kernels. Raises ``OSError`` if
+    the option is unavailable or the bind fails.
+    """
+    if not hasattr(socket, "SO_BINDTODEVICE"):
+        raise OSError(
+            "SO_BINDTODEVICE is not available on this platform (Linux only)"
+        )
+    try:
+        sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_BINDTODEVICE,
+            device.encode("utf-8"),
+        )
+    except OSError as e:
+        raise OSError(
+            f"Failed to bind socket to device '{device}': {e}. "
+            "This typically requires CAP_NET_RAW or root."
+        ) from e
 
 
 def human_bps(bps: float) -> str:

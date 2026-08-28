@@ -5,8 +5,14 @@ import struct
 from pathlib import Path
 from typing import Union
 
-RECORD_STRUCT = struct.Struct("<QQII")
-CSV_COLUMNS = ("sequence", "size_bytes", "transmitted_ns", "received_ns")
+RECORD_STRUCT = struct.Struct("<QQIII")
+CSV_COLUMNS = (
+    "sequence",
+    "size_bytes",
+    "transmitted_ns",
+    "received_ns",
+    "event_id",
+)
 
 # Defaults target ~1 Gbit/s with 1200-byte payloads (~104k pkt/s): one chunk
 # holds ~5 s of traffic; eight chunks cover ~40 s (~96 MiB) without allocating
@@ -18,10 +24,11 @@ DEFAULT_NUM_CHUNKS = 8
 class PacketRecorder:
     """Record UDP datagram traces in memory; write CSV when closed.
 
-    Each record is ``tx_timestamp_ns, rx_timestamp_ns, sequence, size`` packed
-    with :data:`RECORD_STRUCT` (two little-endian ``uint64`` timestamps and two
-    ``uint32`` values). Latency is not stored; derive it as
-    ``rx_timestamp_ns - tx_timestamp_ns``.
+    Each record is ``tx_timestamp_ns, rx_timestamp_ns, sequence, size,
+    event_id`` packed with :data:`RECORD_STRUCT` (two little-endian
+    ``uint64`` timestamps and three ``uint32`` values). Latency is not
+    stored; derive it as ``rx_timestamp_ns - tx_timestamp_ns``.
+    ``event_id`` is ``0`` when unset (no traffic-pattern attribution).
 
     Records are packed into fixed-size chunks during the test. Chunks are
     allocated up front so rotation does not zero a large buffer on the receive
@@ -52,9 +59,11 @@ class PacketRecorder:
         self.current = self._free.pop()
         self.offset = 0
 
-    def add(self, seq: int, tx_ns: int, rx_ns: int, size: int) -> None:
+    def add(
+        self, seq: int, tx_ns: int, rx_ns: int, size: int, event_id: int = 0
+    ) -> None:
         self._record.pack_into(
-            self.current, self.offset, tx_ns, rx_ns, seq, size
+            self.current, self.offset, tx_ns, rx_ns, seq, size, event_id
         )
         self.offset += self._record.size
         self.recorded += 1
@@ -76,10 +85,10 @@ class PacketRecorder:
             writer = csv.writer(f)
             writer.writerow(CSV_COLUMNS)
             for chunk, nbytes in self._chunks:
-                for tx_ns, rx_ns, seq, size in self._record.iter_unpack(
+                for tx_ns, rx_ns, seq, size, event_id in self._record.iter_unpack(
                     memoryview(chunk)[:nbytes]
                 ):
-                    writer.writerow((seq, size, tx_ns, rx_ns))
+                    writer.writerow((seq, size, tx_ns, rx_ns, event_id))
 
         self._chunks.clear()
 

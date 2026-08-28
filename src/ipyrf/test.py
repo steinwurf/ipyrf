@@ -83,7 +83,7 @@ class IPyrfClient:
             self.log_file_path
         ), f"log file {self.log_file_path} already exists"
 
-    def run_udp_server(self, address, port, packet_record=None):
+    def run_udp_server(self, address, port, packet_record=None, inactivity_timeout=None):
         """
         Run ipyrf as a UDP server.
 
@@ -91,10 +91,13 @@ class IPyrfClient:
             address: IP address to bind to.
             port: Port number to listen on.
             packet_record: Optional CSV path for UDP packet traces.
+            inactivity_timeout: Optional seconds without packets before exit.
         """
         args = ["udp", "server", address, "--port", str(port)]
         if packet_record is not None:
             args += ["--packet-record", str(packet_record)]
+        if inactivity_timeout is not None:
+            args += ["--inactivity-timeout", str(inactivity_timeout)]
         self.__run(args)
 
     def run_tcp_server(self, address, port):
@@ -109,7 +112,14 @@ class IPyrfClient:
         self.__run(args)
 
     def run_udp_client(
-        self, address, port, duration, bandwidth, enable_latency=True, length=None
+        self,
+        address,
+        port,
+        duration,
+        bandwidth,
+        enable_latency=True,
+        length=None,
+        bind_dev=None,
     ):
         """
         Run ipyrf as a UDP client.
@@ -121,6 +131,7 @@ class IPyrfClient:
             bandwidth: Target bandwidth (e.g., "10M" for 10 Mbps).
             enable_latency: Whether to enable latency measurements.
             length: Optional packet length.
+            bind_dev: Optional network interface name to bind to.
         """
         args = [
             "udp",
@@ -137,6 +148,8 @@ class IPyrfClient:
             args += ["--enable-latency"]
         if length is not None:
             args += ["-l", str(length)]
+        if bind_dev is not None:
+            args += ["--bind-dev", str(bind_dev)]
         self.__run(args)
 
     def run_tcp_client(
@@ -147,6 +160,7 @@ class IPyrfClient:
         enable_latency=True,
         bandwidth=None,
         TCP_MAXSEG=None,
+        bind_dev=None,
     ):
         """
         Run ipyrf as a TCP client.
@@ -159,6 +173,7 @@ class IPyrfClient:
             bandwidth: Optional target bandwidth (e.g., "10M" for
                        10 Mbps).
             TCP_MAXSEG: Optional TCP maximum segment size.
+            bind_dev: Optional network interface name to bind to.
         """
         args = [
             "tcp",
@@ -175,6 +190,8 @@ class IPyrfClient:
             args += ["--bandwidth", str(bandwidth)]
         if TCP_MAXSEG is not None:
             args += ["--set-mss", str(TCP_MAXSEG)]
+        if bind_dev is not None:
+            args += ["--bind-dev", str(bind_dev)]
         self.__run(args)
 
     def __run(self, args):

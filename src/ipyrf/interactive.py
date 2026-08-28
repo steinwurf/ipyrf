@@ -106,8 +106,15 @@ class KeyReader:
 
 
 class InteractiveController(BasePacingController):
-    def __init__(self, initial_bps: float | None, interval: float = 1.0):
-        super().__init__(interval_seconds=interval)
+    def __init__(
+        self,
+        initial_bps: float | None,
+        interval: float = 1.0,
+        header_overhead: int = 0,
+    ):
+        super().__init__(
+            interval_seconds=interval, header_overhead=header_overhead
+        )
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.pacing = initial_bps is not None
@@ -127,7 +134,7 @@ class InteractiveController(BasePacingController):
             tb = self.tb
         if tb is None:
             return
-        sleep_time = tb.take(n_bytes)
+        sleep_time = tb.take(n_bytes + self.header_overhead)
         if sleep_time <= 0:
             return
         if sleep_time > 0.5:
@@ -162,7 +169,7 @@ class InteractiveController(BasePacingController):
                 if self.tb is None:
                     self.tb = Pacer(self.target_bps)
                 else:
-                    self.tb.set_rate_bps(self.target_bps)
+                    self.tb.set_bandwidth_bps(self.target_bps)
 
     def unlimited(self):
         with self.lock:
@@ -182,7 +189,7 @@ class InteractiveController(BasePacingController):
                 self.target_bps = max(1e3, self.target_bps * scale)
             else:
                 self.target_bps = max(1e3, self.target_bps + delta_bps)
-            self.tb.set_rate_bps(self.target_bps)
+            self.tb.set_bandwidth_bps(self.target_bps)
             return self.target_bps
 
     def request_stop(self):
