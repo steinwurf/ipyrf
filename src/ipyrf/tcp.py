@@ -148,7 +148,7 @@ class TcpReceiver:
     def begin(self, start: Optional[float] = None) -> None:
         self.start = time.time() if start is None else start
         self.last_ts = self.start
-        self.log.test(self.peer[0], self.peer[1], self.start)
+        self.log.test("rx", self.peer[0], self.peer[1], self.start)
         self._started = True
 
     def read_first_record(self) -> Optional[TcpRecord]:
@@ -327,7 +327,7 @@ class TcpSender:
                 to_send = MAX_TCP_PAYLOAD
 
             if self.bytes_sent == 0:
-                self.log.test(self.host, self.port, self.start)
+                self.log.test("tx", self.host, self.port, self.start)
 
             sent = self.send_record(to_send)
 
@@ -362,7 +362,7 @@ class TcpSender:
         self.sock.close()
         actual_duration = max(1e-9, time.time() - self.start)
         self.log.summary(
-            direction="rx",
+            direction="tx",
             receiver=f"{self.host}:{self.port}",
             seconds=actual_duration,
             bytes=self.bytes_sent,
