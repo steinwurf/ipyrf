@@ -7,18 +7,25 @@ from typing import Optional, Tuple
 
 from .handshake import (
     ACTION_DATA,
+    ACTION_ERROR,
     ACTION_REVERSE,
     UDP_CONTROL_FLAG,
+    UDP_CONTROL_SEQ_ERROR,
     UDP_CONTROL_SEQ_REVERSE,
     ReverseConfig,
     classify_udp_first,
+    pack_error_message,
     pack_reverse_config,
     reverse_udp_payload_len,
+    unpack_error_message,
     unpack_reverse_config,
 )
 from .latency import LatencyTracker
 from .logger import Logger
-from .controllers import BasePacingController, StaticPacingController
+from .controllers import (
+    BasePacingController,
+    controller_from_reverse_config,
+)
 from .packet_recorder import PacketRecorder
 from .utils import bind_to_device
 
@@ -161,6 +168,9 @@ class UdpReceiver:
                     self.stop_reason = "inactivity"
                     break
                 continue
+            except KeyboardInterrupt:
+                self.stop_reason = "interrupted"
+                break
             packet = parse_udp_packet(
                 self.recv_buffer, n, peer, time.time_ns()
             )
@@ -334,41 +344,44 @@ class UdpSender:
         self.last_ts = self.start
         self.controller.start()
 
-        while not self.controller.should_stop():
-            flags = LATENCY_FLAG if self.enable_latency else 0
-            send_len = self.controller.next_send(self.payload_len)
-            if send_len <= 0:
-                continue
-            if send_len < UDP_HDR.size:
-                send_len = UDP_HDR.size
-            elif send_len > self.payload_len:
-                send_len = self.payload_len
+        try:
+            while not self.controller.should_stop():
+                flags = LATENCY_FLAG if self.enable_latency else 0
+                send_len = self.controller.next_send(self.payload_len)
+                if send_len <= 0:
+                    continue
+                if send_len < UDP_HDR.size:
+                    send_len = UDP_HDR.size
+                elif send_len > self.payload_len:
+                    send_len = self.payload_len
 
-            try:
-                if self.bytes_sent == 0:
-                    self.log.test("tx", self.host, self.port, self.start)
-                n = self.send_datagram(send_len, flags=flags)
-            except Exception as e:
-                self.stop_reason = f"error sending packet: {e}"
-                break
-            if n <= 0:
-                break
-            self.bytes_sent += n
-            self.pkts_sent += 1
-            self.seq += 1
-            now = time.time()
-            if (now - self.last_ts) >= self.controller.interval_seconds:
-                extra = self.controller.get_update_fields()
-                self.log.update(
-                    start_ts=self.last_ts,
-                    end_ts=now,
-                    bytes=self.bytes_sent - self.last_bytes,
-                    packets=self.pkts_sent - self.last_pkts,
-                    **extra,
-                )
-                self.last_ts = now
-                self.last_bytes = self.bytes_sent
-                self.last_pkts = self.pkts_sent
+                try:
+                    if self.bytes_sent == 0:
+                        self.log.test("tx", self.host, self.port, self.start)
+                    n = self.send_datagram(send_len, flags=flags)
+                except Exception as e:
+                    self.stop_reason = f"error sending packet: {e}"
+                    break
+                if n <= 0:
+                    break
+                self.bytes_sent += n
+                self.pkts_sent += 1
+                self.seq += 1
+                now = time.time()
+                if (now - self.last_ts) >= self.controller.interval_seconds:
+                    extra = self.controller.get_update_fields()
+                    self.log.update(
+                        start_ts=self.last_ts,
+                        end_ts=now,
+                        bytes=self.bytes_sent - self.last_bytes,
+                        packets=self.pkts_sent - self.last_pkts,
+                        **extra,
+                    )
+                    self.last_ts = now
+                    self.last_bytes = self.bytes_sent
+                    self.last_pkts = self.pkts_sent
+        except KeyboardInterrupt:
+            self.stop_reason = "interrupted"
 
     def send_fin(self) -> None:
         fin_flags = FIN_FLAG | (LATENCY_FLAG if self.enable_latency else 0)
@@ -378,9 +391,12 @@ class UdpSender:
             )
             try:
                 self.sock.send(self.payload)
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 pass
-            time.sleep(0.01)
+            try:
+                time.sleep(0.01)
+            except KeyboardInterrupt:
+                break
 
     def summarize(self) -> None:
         dur = max(1e-9, time.time() - self.start)
@@ -404,6 +420,7 @@ def server(
     interval_seconds: float,
     packet_record_path: Optional[str] = None,
     inactivity_timeout: float = 2.0,
+    trace_dir: Optional[str] = None,
 ):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -426,11 +443,20 @@ def server(
         if action == ACTION_DATA:
             receiver.run(first)
         elif action == ACTION_REVERSE:
-            _run_udp_reverse_send(sock, log, receiver, first, interval_seconds)
+            _run_udp_reverse_send(
+                sock,
+                log,
+                receiver,
+                first,
+                interval_seconds,
+                trace_dir=trace_dir,
+            )
             return
         else:
             receiver.src_peer = first.peer
             receiver.stop_reason = f"unsupported first-packet action: {action}"
+    except KeyboardInterrupt:
+        receiver.stop_reason = "interrupted"
     finally:
         receiver.close_recorder()
 
@@ -443,17 +469,9 @@ def _run_udp_reverse_send(
     receiver: UdpReceiver,
     first: UdpPacket,
     interval_seconds: float,
+    trace_dir: Optional[str] = None,
 ) -> None:
     payload = bytes(receiver.recv_buffer[UDP_HDR.size : first.size])
-    try:
-        config = unpack_reverse_config(payload)
-    except ValueError as e:
-        receiver.src_peer = first.peer
-        receiver.stop_reason = str(e)
-        receiver.close_recorder()
-        receiver.summarize()
-        return
-
     try:
         sock.connect(first.peer)
     except Exception as e:
@@ -463,16 +481,33 @@ def _run_udp_reverse_send(
         receiver.summarize()
         return
 
+    try:
+        config = unpack_reverse_config(payload)
+        controller = controller_from_reverse_config(
+            config, interval_seconds, trace_dir=trace_dir
+        )
+    except ValueError as e:
+        _send_udp_reverse_error(sock, str(e))
+        receiver.src_peer = first.peer
+        receiver.stop_reason = str(e)
+        receiver.close_recorder()
+        receiver.summarize()
+        return
+
     payload_len = reverse_udp_payload_len(config)
-    controller = StaticPacingController(
-        config.bandwidth_bps, config.duration_seconds, interval_seconds
-    )
     sender = UdpSender(
         sock, log, first.peer[0], first.peer[1], payload_len, controller, False
     )
     sender.run()
     sender.send_fin()
     sender.summarize()
+
+
+def _send_udp_reverse_error(sock: socket.socket, message: str) -> None:
+    packed = pack_error_message(message)
+    for _ in range(3):
+        write_udp_control(sock, UDP_CONTROL_SEQ_ERROR, packed)
+        time.sleep(0.01)
 
 
 def client(
@@ -533,6 +568,8 @@ def _run_udp_reverse_receive(
         duration_seconds=reverse_config.duration_seconds,
         bandwidth_bps=reverse_config.bandwidth_bps,
         payload_len=reverse_config.payload_len or payload_len,
+        traffic_pattern_name=reverse_config.traffic_pattern_name,
+        loops=reverse_config.loops,
     )
     packed = pack_reverse_config(config)
     last_err = None
@@ -566,13 +603,18 @@ def _run_udp_reverse_receive(
     )
     try:
         first = receiver.wait_first()
-        if classify_first_packet(first) != ACTION_DATA:
+        action = classify_first_packet(first)
+        if action == ACTION_ERROR:
+            payload = bytes(receiver.recv_buffer[UDP_HDR.size : first.size])
             receiver.src_peer = first.peer
-            receiver.stop_reason = (
-                f"unexpected first-packet action: {classify_first_packet(first)}"
-            )
+            receiver.stop_reason = unpack_error_message(payload)
+        elif action != ACTION_DATA:
+            receiver.src_peer = first.peer
+            receiver.stop_reason = f"unexpected first-packet action: {action}"
         else:
             receiver.run(first)
+    except KeyboardInterrupt:
+        receiver.stop_reason = "interrupted"
     finally:
         receiver.close_recorder()
     receiver.summarize()

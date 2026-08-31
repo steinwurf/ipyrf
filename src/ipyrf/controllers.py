@@ -1,9 +1,11 @@
 from __future__ import annotations
 import time
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, Optional, Union
 
+from .handshake import ReverseConfig, resolve_trace_file
 from .pacer import Pacer
-from .traffic_pattern import TrafficPattern
+from .traffic_pattern import LoopedTrafficPattern, TrafficPattern, load_traffic_pattern
 from .utils import sleep_until_ns
 
 _NS_PER_SECOND = 1_000_000_000
@@ -263,3 +265,35 @@ class TrafficPatternController(BasePacingController):
         wait = self.tb.take(n_bytes + self.header_overhead)
         if wait > 0:
             sleep_until_ns(time.monotonic_ns() + int(wait * _NS_PER_SECOND))
+
+
+def controller_from_reverse_config(
+    config: ReverseConfig,
+    interval_seconds: float,
+    *,
+    header_overhead: int = 0,
+    trace_dir: Optional[Union[str, Path]] = None,
+) -> BasePacingController:
+    """Build the send controller described by a reverse-test config.
+
+    A traffic-pattern name is resolved on the server (working directory
+    or ``trace_dir``) and loaded locally. Bandwidth-paced reverse tests
+    use :class:`StaticPacingController`.
+    """
+    if not config.traffic_pattern_name:
+        return StaticPacingController(
+            config.bandwidth_bps,
+            config.duration_seconds,
+            interval_seconds,
+            header_overhead=header_overhead,
+        )
+    path = resolve_trace_file(config.traffic_pattern_name, trace_dir)
+    pattern = load_traffic_pattern(path)
+    if config.loops > 1:
+        pattern = LoopedTrafficPattern(pattern, config.loops)
+    return TrafficPatternController(
+        pattern,
+        interval_seconds,
+        bandwidth_bps=config.bandwidth_bps,
+        header_overhead=header_overhead,
+    )

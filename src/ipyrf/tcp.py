@@ -8,16 +8,23 @@ from typing import Optional
 
 from .handshake import (
     ACTION_DATA,
+    ACTION_ERROR,
     ACTION_REVERSE,
+    TCP_FLAG_ERROR,
     TCP_FLAG_REVERSE,
     ReverseConfig,
     classify_tcp_flag,
+    pack_error_message,
     pack_reverse_config,
+    unpack_error_message,
     unpack_reverse_config,
 )
 from .latency import LatencyTracker
 from .logger import Logger
-from .controllers import BasePacingController, StaticPacingController
+from .controllers import (
+    BasePacingController,
+    controller_from_reverse_config,
+)
 from .utils import bind_to_device
 
 # TCP record header: latency flag, payload length, send timestamp (ns), event id
@@ -168,6 +175,9 @@ class TcpReceiver:
                 n = self.conn.recv_into(self._scratch)
             except socket.timeout:
                 continue
+            except KeyboardInterrupt:
+                self.stop_reason = "interrupted"
+                return
             if n == 0:
                 self.stop_reason = "end-of-test"
                 break
@@ -206,6 +216,9 @@ class TcpReceiver:
                 n = self.conn.recv_into(self._scratch)
             except socket.timeout:
                 continue
+            except KeyboardInterrupt:
+                self.stop_reason = "interrupted"
+                return None
             if n == 0:
                 self.stop_reason = "end-of-test"
                 return None
@@ -315,37 +328,40 @@ class TcpSender:
         self.last_ts = self.start
         self.controller.start()
 
-        while True:
-            if self.controller.should_stop():
-                self.stop_reason = self.controller.stop_reason()
-                break
+        try:
+            while True:
+                if self.controller.should_stop():
+                    self.stop_reason = self.controller.stop_reason()
+                    break
 
-            to_send = self.controller.next_send(DEFAULT_TCP_PAYLOAD)
-            if to_send <= 0:
-                continue
-            if to_send > MAX_TCP_PAYLOAD:
-                to_send = MAX_TCP_PAYLOAD
+                to_send = self.controller.next_send(DEFAULT_TCP_PAYLOAD)
+                if to_send <= 0:
+                    continue
+                if to_send > MAX_TCP_PAYLOAD:
+                    to_send = MAX_TCP_PAYLOAD
 
-            if self.bytes_sent == 0:
-                self.log.test("tx", self.host, self.port, self.start)
+                if self.bytes_sent == 0:
+                    self.log.test("tx", self.host, self.port, self.start)
 
-            sent = self.send_record(to_send)
+                sent = self.send_record(to_send)
 
-            now = time.time()
-            if (now - self.last_ts) >= self.controller.interval_seconds:
-                self.log.update(
-                    start_ts=self.last_ts,
-                    end_ts=now,
-                    bytes=self.bytes_sent - self.last_bytes,
-                    **self.controller.get_update_fields(),
-                )
-                self.last_ts = now
-                self.last_bytes = self.bytes_sent
+                now = time.time()
+                if (now - self.last_ts) >= self.controller.interval_seconds:
+                    self.log.update(
+                        start_ts=self.last_ts,
+                        end_ts=now,
+                        bytes=self.bytes_sent - self.last_bytes,
+                        **self.controller.get_update_fields(),
+                    )
+                    self.last_ts = now
+                    self.last_bytes = self.bytes_sent
 
-            if not sent:
-                break
-            if self.stop_reason != "unknown" and self.stop_reason != "duration":
-                break
+                if not sent:
+                    break
+                if self.stop_reason != "unknown" and self.stop_reason != "duration":
+                    break
+        except KeyboardInterrupt:
+            self.stop_reason = "interrupted"
 
     def finish(self) -> None:
         try:
@@ -357,7 +373,7 @@ class TcpSender:
         try:
             while self.sock.recv(4096):
                 pass
-        except Exception:
+        except (Exception, KeyboardInterrupt):
             pass
         self.sock.close()
         actual_duration = max(1e-9, time.time() - self.start)
@@ -396,6 +412,7 @@ def server(
     port: int,
     interval_seconds: float,
     congestion_control: Optional[str],
+    trace_dir: Optional[str] = None,
 ):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -406,6 +423,15 @@ def server(
     try:
         conn, addr = srv.accept()
         accept_ts = time.time()
+    except KeyboardInterrupt:
+        log.summary(
+            receiver=f"{bind_addr}:{port}",
+            stop_reason="interrupted",
+            seconds=0,
+            bytes=0,
+            bits_per_second=0,
+        )
+        return
     except Exception as e:
         log.summary(
             receiver=f"{bind_addr}:{port}",
@@ -423,6 +449,10 @@ def server(
         conn, log, interval_seconds, bind_addr, port, addr
     )
     first = receiver.read_first_record()
+    if receiver.stop_reason == "interrupted":
+        receiver.summarize()
+        conn.close()
+        return
     action = classify_first_record(first)
 
     if action == ACTION_DATA:
@@ -435,7 +465,7 @@ def server(
 
     if action == ACTION_REVERSE:
         _run_tcp_reverse_send(
-            conn, log, first, addr, interval_seconds
+            conn, log, first, addr, interval_seconds, trace_dir=trace_dir
         )
         return
 
@@ -450,10 +480,17 @@ def _run_tcp_reverse_send(
     first: Optional[TcpRecord],
     addr: tuple[str, int],
     interval_seconds: float,
+    trace_dir: Optional[str] = None,
 ) -> None:
     payload = b"" if first is None else first.payload
     try:
         config = unpack_reverse_config(payload)
+        controller = controller_from_reverse_config(
+            config,
+            interval_seconds,
+            header_overhead=TCP_HDR_SIZE,
+            trace_dir=trace_dir,
+        )
     except ValueError as e:
         log.summary(
             direction="tx",
@@ -464,15 +501,10 @@ def _run_tcp_reverse_send(
             bits_per_second=0,
             stop_reason=str(e),
         )
+        write_tcp_record(conn, TCP_FLAG_ERROR, pack_error_message(str(e)))
         conn.close()
         return
 
-    controller = StaticPacingController(
-        config.bandwidth_bps,
-        config.duration_seconds,
-        interval_seconds,
-        header_overhead=TCP_HDR_SIZE,
-    )
     sender = TcpSender(conn, log, controller, False, addr[0], addr[1])
     sender.run()
     sender.finish()
@@ -537,8 +569,42 @@ def _run_tcp_reverse_receive(
     receiver = TcpReceiver(
         sock, log, interval_seconds, local[0], local[1], peer
     )
+    first = receiver.read_first_record()
+    action = classify_first_record(first)
+    if action == ACTION_ERROR:
+        message = unpack_error_message(b"" if first is None else first.payload)
+        log.summary(
+            direction="rx",
+            receiver=f"{host}:{port}",
+            seconds=0,
+            bytes=0,
+            bits_per_second=0,
+            stop_reason=message,
+        )
+        sock.close()
+        return
+    if first is None or action != ACTION_DATA:
+        log.summary(
+            direction="rx",
+            receiver=f"{host}:{port}",
+            seconds=0,
+            bytes=0,
+            bits_per_second=0,
+            stop_reason=(
+                receiver.stop_reason
+                if receiver.stop_reason == "interrupted"
+                else (
+                    "server closed before reverse test started"
+                    if first is None
+                    else f"unexpected first-packet action: {action}"
+                )
+            ),
+        )
+        sock.close()
+        return
+
     receiver.begin()
-    receiver.run()
+    receiver.run(first=first)
     receiver.summarize()
     sock.close()
 

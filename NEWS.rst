@@ -28,10 +28,18 @@ Latest
   variable-sized sends work.
 * Minor: Added ``-R`` / ``--reverse`` for TCP/UDP clients. The client
   still connects; the first packet tells the server to send using the
-  client's ``--bandwidth`` and ``--time`` (and UDP ``-l``). Not
-  supported with ``--interactive`` or ``--traffic-pattern``.
+  client's ``--bandwidth`` and ``--time`` (and UDP ``-l``), or the
+  file name of ``--traffic-pattern`` (not the path) so the config
+  stays in a single packet. The server loads that file from its
+  working directory, or from ``--trace-dir DIR`` when given.
+  ``--loops`` and ``--bandwidth`` (egress cap) are forwarded with
+  the pattern. If the server cannot load the file, it replies with
+  an error and the client fails with the same reason.
+  Not supported with ``--interactive``.
 * Patch: TCP pacing now accounts for the per-record header so
   ``--bandwidth`` matches the measured socket rate.
+* Patch: Ctrl+C now ends a running test with ``stop_reason``
+  ``interrupted`` instead of printing a traceback.
 * Patch: Added a GitHub Action to run the unit tests.
 
 1.5.1

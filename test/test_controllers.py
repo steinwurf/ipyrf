@@ -169,3 +169,88 @@ def test_static_pacing_charges_header_overhead(monkeypatch):
     assert controller.next_send(1200) == 1200
     assert controller.current_event_id() == 0
     assert taken == [1217]
+
+
+def test_controller_from_reverse_config_loads_trace(tmp_path):
+    from ipyrf.controllers import controller_from_reverse_config
+    from ipyrf.handshake import ReverseConfig
+
+    path = tmp_path / "burst.json"
+    path.write_text(
+        '{"version": 1, "type": "trace", "events": ['
+        '{"timestamp": 0.0, "nbytes": 100}]}',
+        encoding="utf-8",
+    )
+    controller = controller_from_reverse_config(
+        ReverseConfig(
+            duration_seconds=0.0, traffic_pattern_name="burst.json", loops=2
+        ),
+        interval_seconds=1.0,
+        trace_dir=tmp_path,
+    )
+    assert isinstance(controller, TrafficPatternController)
+    assert controller.pattern.loops == 2
+    assert controller.pattern.total_bytes() == 200
+
+    paced = controller_from_reverse_config(
+        ReverseConfig(duration_seconds=2.0, bandwidth_bps=1e6),
+        interval_seconds=1.0,
+    )
+    assert isinstance(paced, StaticPacingController)
+    assert paced.duration_seconds == 2.0
+
+
+def test_tcp_sender_run_sets_interrupted(tmp_path):
+    import socket
+
+    from ipyrf.logger import Logger
+    from ipyrf.tcp import TcpSender
+
+    a, b = socket.socketpair()
+    try:
+        log = Logger(True, "tcp", "client", logfile=str(tmp_path / "s.json"))
+        controller = StaticPacingController(None, 60.0, 1.0)
+        sender = TcpSender(a, log, controller, False, "127.0.0.1", 1)
+
+        def interrupt(_n_bytes):
+            raise KeyboardInterrupt
+
+        sender.controller.next_send = interrupt
+        sender.run()
+        assert sender.stop_reason == "interrupted"
+    finally:
+        a.close()
+        b.close()
+
+
+def test_udp_sender_run_sets_interrupted(tmp_path):
+    import socket
+
+    from ipyrf.logger import Logger
+    from ipyrf.udp import UdpSender
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.connect(("127.0.0.1", 9))
+    try:
+        log = Logger(True, "udp", "client", logfile=str(tmp_path / "s.json"))
+        controller = StaticPacingController(None, 60.0, 1.0)
+        sender = UdpSender(sock, log, "127.0.0.1", 9, 64, controller, False)
+
+        def interrupt(_n_bytes):
+            raise KeyboardInterrupt
+
+        sender.controller.next_send = interrupt
+        sender.run()
+        assert sender.stop_reason == "interrupted"
+    finally:
+        sock.close()
+
+
+def test_cli_main_swallows_keyboard_interrupt(monkeypatch):
+    from ipyrf.cli import main
+
+    def boom():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("ipyrf.cli._main", boom)
+    main()
