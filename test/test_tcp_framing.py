@@ -7,6 +7,7 @@ from ipyrf.tcp import (
     MAX_TCP_PAYLOAD,
     TCP_HDR,
     TCP_HDR_SIZE,
+    parse_tcp_record,
 )
 
 
@@ -46,13 +47,19 @@ def test_tcp_framing_parses_variable_payload_sizes():
     recv_buffer = bytearray(b"".join(records))
 
     parsed = []
-    while len(recv_buffer) >= TCP_HDR_SIZE:
-        flag, payload_len, timestamp_ns, event_id = TCP_HDR.unpack_from(recv_buffer)
-        assert payload_len <= MAX_TCP_PAYLOAD
-        record_size = TCP_HDR_SIZE + payload_len
-        assert len(recv_buffer) >= record_size
-        parsed.append((flag, payload_len, timestamp_ns, event_id))
-        del recv_buffer[:record_size]
+    while True:
+        record, error = parse_tcp_record(recv_buffer)
+        assert error is None
+        if record is None:
+            break
+        parsed.append(
+            (
+                record.latency_flag,
+                record.payload_len,
+                record.timestamp_ns,
+                record.event_id,
+            )
+        )
 
     assert recv_buffer == b""
     assert parsed == [
@@ -66,6 +73,11 @@ def test_tcp_framing_waits_for_complete_record():
     partial = TCP_HDR.pack(LATENCY_ENABLED, 200, time.time_ns(), 3) + b"\x00" * 50
     recv_buffer = bytearray(partial)
 
+    record, error = parse_tcp_record(recv_buffer)
+    assert record is None
+    assert error is None
+    assert len(recv_buffer) == len(partial)
+
     flag, payload_len, timestamp_ns, event_id = TCP_HDR.unpack_from(recv_buffer)
     record_size = TCP_HDR_SIZE + payload_len
     assert len(recv_buffer) < record_size
@@ -73,3 +85,13 @@ def test_tcp_framing_waits_for_complete_record():
     assert flag == LATENCY_ENABLED
     assert timestamp_ns > 0
     assert event_id == 3
+
+
+def test_tcp_framing_rejects_oversized_payload():
+    recv_buffer = bytearray(
+        TCP_HDR.pack(LATENCY_DISABLED, MAX_TCP_PAYLOAD + 1, 0, 0)
+    )
+    record, error = parse_tcp_record(recv_buffer)
+    assert record is None
+    assert error == f"invalid payload length: {MAX_TCP_PAYLOAD + 1}"
+    assert len(recv_buffer) == TCP_HDR_SIZE

@@ -27,6 +27,9 @@ Latest
   and ``--packet-record`` CSV include ``event_id`` (1-based event/period
   index, or ``0`` when unset). TCP records include the payload length so
   variable-sized sends work.
+* Patch: Split TCP and UDP client and server into first-packet,
+  send, and receive steps so a later reverse/config handshake can
+  reuse the data path. The first packet is still test payload.
 * Patch: TCP pacing now accounts for the per-record header so
   ``--bandwidth`` matches the measured socket rate.
 
