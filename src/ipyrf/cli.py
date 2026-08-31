@@ -9,6 +9,7 @@ from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
 from .interactive import InteractiveController
 from .controllers import StaticPacingController, TrafficPatternController
+from .handshake import ReverseConfig
 from .traffic_pattern import (
     LoopedTrafficPattern,
     TrafficPatternError,
@@ -189,6 +190,16 @@ def main():
             "typically requires CAP_NET_RAW or root)"
         ),
     )
+    tcp_cli.add_argument(
+        "-R",
+        "--reverse",
+        action="store_true",
+        help=(
+            "Server sends, client receives. Forwards --bandwidth and "
+            "--time to the server. Cannot be combined with "
+            "--interactive or --traffic-pattern"
+        ),
+    )
 
     # Time, interactive mode, and traffic pattern are mutually exclusive
     tcp_time_group = tcp_cli.add_mutually_exclusive_group()
@@ -254,6 +265,16 @@ def main():
         help=(
             "Bind the client socket to DEVICE (Linux SO_BINDTODEVICE; "
             "typically requires CAP_NET_RAW or root)"
+        ),
+    )
+    udp_cli.add_argument(
+        "-R",
+        "--reverse",
+        action="store_true",
+        help=(
+            "Server sends, client receives. Forwards --bandwidth, "
+            "--time, and -l to the server. Cannot be combined with "
+            "--interactive or --traffic-pattern"
         ),
     )
 
@@ -337,7 +358,19 @@ def main():
     if args.role not in ("server", "client"):
         raise ValueError(f"Invalid role: {args.role}. Must be 'server' or 'client'.")
 
-    log = Logger(args.json_log, args.protocol, args.role, args.logfile)
+    reverse = getattr(args, "reverse", False)
+    if reverse:
+        if getattr(args, "interactive", False):
+            p.error("--reverse cannot be combined with --interactive")
+        if getattr(args, "traffic_pattern", None) is not None:
+            p.error("--reverse cannot be combined with --traffic-pattern")
+
+    log = Logger(
+        args.json_log,
+        args.protocol,
+        args.role,
+        args.logfile,
+    )
 
     controller = None
     if args.protocol == "udp":
@@ -351,33 +384,48 @@ def main():
                 inactivity_timeout=args.inactivity_timeout,
             )
         else:
-            if getattr(args, "traffic_pattern", None) is not None:
-                controller = TrafficPatternController(
-                    args.traffic_pattern,
-                    args.interval,
-                    bandwidth_bps=args.bandwidth,
+            if reverse:
+                udp.client(
+                    log,
+                    args.address,
+                    args.port,
+                    args.length,
+                    reverse_config=ReverseConfig(
+                        duration_seconds=float(args.time),
+                        bandwidth_bps=args.bandwidth,
+                        payload_len=args.length,
+                    ),
+                    bind_dev=args.bind_dev,
+                    interval_seconds=args.interval,
                 )
             else:
-                bw = (
-                    args.bandwidth or parse_bandwidth("50M")
-                    if args.interactive
-                    else args.bandwidth
-                )
-                if args.interactive:
-                    controller = InteractiveController(bw, args.interval)
-                else:
-                    controller = StaticPacingController(
-                        bw, args.time, args.interval
+                if getattr(args, "traffic_pattern", None) is not None:
+                    controller = TrafficPatternController(
+                        args.traffic_pattern,
+                        args.interval,
+                        bandwidth_bps=args.bandwidth,
                     )
-            udp.client(
-                log,
-                args.address,
-                args.port,
-                args.length,
-                controller,
-                args.enable_latency,
-                bind_dev=args.bind_dev,
-            )
+                else:
+                    bw = (
+                        args.bandwidth or parse_bandwidth("50M")
+                        if args.interactive
+                        else args.bandwidth
+                    )
+                    if args.interactive:
+                        controller = InteractiveController(bw, args.interval)
+                    else:
+                        controller = StaticPacingController(
+                            bw, args.time, args.interval
+                        )
+                udp.client(
+                    log,
+                    args.address,
+                    args.port,
+                    args.length,
+                    controller,
+                    args.enable_latency,
+                    bind_dev=args.bind_dev,
+                )
 
     else:
         if args.role == "server":
@@ -389,41 +437,56 @@ def main():
                 args.congestion_control,
             )
         else:
-            # TCP record header is sent in addition to the payload returned by
-            # next_send(); charge it so measured rates match --bandwidth /
-            # traffic-pattern bitrates. UDP includes its header in the datagram.
-            tcp_overhead = tcp.TCP_HDR_SIZE
-            if getattr(args, "traffic_pattern", None) is not None:
-                controller = TrafficPatternController(
-                    args.traffic_pattern,
-                    args.interval,
-                    bandwidth_bps=args.bandwidth,
-                    header_overhead=tcp_overhead,
-                )
-            elif args.interactive:
-                # If no bandwidth provided, controller will act as unlimited until adjusted
-                controller = InteractiveController(
-                    args.bandwidth,
-                    args.interval,
-                    header_overhead=tcp_overhead,
+            if reverse:
+                tcp.client(
+                    log,
+                    args.address,
+                    args.port,
+                    args.congestion_control,
+                    args.set_mss,
+                    reverse_config=ReverseConfig(
+                        duration_seconds=float(args.time),
+                        bandwidth_bps=args.bandwidth,
+                    ),
+                    bind_dev=args.bind_dev,
+                    interval_seconds=args.interval,
                 )
             else:
-                controller = StaticPacingController(
-                    args.bandwidth,
-                    args.time,
-                    args.interval,
-                    header_overhead=tcp_overhead,
+                # TCP record header is sent in addition to the payload returned by
+                # next_send(); charge it so measured rates match --bandwidth /
+                # traffic-pattern bitrates. UDP includes its header in the datagram.
+                tcp_overhead = tcp.TCP_HDR_SIZE
+                if getattr(args, "traffic_pattern", None) is not None:
+                    controller = TrafficPatternController(
+                        args.traffic_pattern,
+                        args.interval,
+                        bandwidth_bps=args.bandwidth,
+                        header_overhead=tcp_overhead,
+                    )
+                elif args.interactive:
+                    # If no bandwidth provided, controller will act as unlimited until adjusted
+                    controller = InteractiveController(
+                        args.bandwidth,
+                        args.interval,
+                        header_overhead=tcp_overhead,
+                    )
+                else:
+                    controller = StaticPacingController(
+                        args.bandwidth,
+                        args.time,
+                        args.interval,
+                        header_overhead=tcp_overhead,
+                    )
+                tcp.client(
+                    log,
+                    args.address,
+                    args.port,
+                    args.congestion_control,
+                    args.set_mss,
+                    controller,
+                    args.enable_latency,
+                    bind_dev=args.bind_dev,
                 )
-            tcp.client(
-                log,
-                args.address,
-                args.port,
-                args.congestion_control,
-                args.set_mss,
-                controller,
-                args.enable_latency,
-                bind_dev=args.bind_dev,
-            )
 
     if controller is not None:
         controller.stop()

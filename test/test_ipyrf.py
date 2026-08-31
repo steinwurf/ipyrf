@@ -20,6 +20,37 @@ def test_ipyrf_tcp_basic_loopback(ipyrf, free_port):
     ipyrf.check((server, client), timeout=5)
 
 
+def test_ipyrf_tcp_reverse_loopback(ipyrf, free_port):
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_tcp_server("127.0.0.1", free_port)
+    client.run_tcp_client(
+        "127.0.0.1", free_port, duration=2, bandwidth="10M", reverse=True
+    )
+
+    ipyrf.check((server, client), timeout=8, criteria={"reverse": True})
+
+
+def test_ipyrf_udp_reverse_loopback(ipyrf, free_port):
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_udp_server("127.0.0.1", free_port)
+    client.run_udp_client(
+        "127.0.0.1", free_port, duration=2, bandwidth="10M", reverse=True
+    )
+
+    ipyrf.check(
+        (server, client),
+        timeout=8,
+        criteria={
+            "reverse": True,
+            "max_loss_pct": 5,
+        },
+    )
+
+
 def test_ipyrf_udp_basic_loopback(ipyrf, free_port):
     server = ipyrf.build()
     client = ipyrf.build()

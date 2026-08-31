@@ -12,13 +12,15 @@ log_modes = ["tcp", "udp"]
 
 class Logger:
     def __init__(
-        self, json_log: bool, mode: str, role: str, logfile: str | None = None
+        self,
+        json_log: bool,
+        mode: str,
+        role: str,
+        logfile: str | None = None
     ):
         self.json_log = json_log
         assert mode in log_modes
         self.mode = mode
-        self.direction = "tx" if role == "client" else "rx"
-        assert self.direction in log_directions
         self.test_start_time = None
         self.logfile = logfile
 
@@ -26,13 +28,14 @@ class Logger:
         self._log(
             log_type="start",
             mode=self.mode,
-            direction=self.direction,
             address=f"{ip}:{port}",
         )
 
-    def test(self, peer_ip: str, peer_port: int, start_ts: float):
+    def test(self, direction: str, peer_ip: str, peer_port: int, start_ts: float):
+        assert direction in log_directions
         self._log(
             log_type="test",
+            direction=direction,
             peer=f"{peer_ip}:{peer_port}",
             ts=start_ts,
         )
@@ -70,16 +73,15 @@ class Logger:
         if self.json_log:
             obj["type"] = log_type
             obj["mode"] = self.mode
-            obj["direction"] = self.direction
             self.write(json.dumps(obj, separators=(",", ":")) + "\n")
             return
         assert log_type in log_types
         if log_type == "start":
             self.write(
-                f"▶ {self.mode.upper()} {self.direction.upper()} — {obj['address']}"
+                f"▶ {self.mode.upper()} — {obj['address']}"
             )
         elif log_type == "test":
-            self.write(f"▶ TEST peer={obj['peer']}  ts={obj['ts']}")
+            self.write(f"▶ TEST {obj['direction'].upper()} peer={obj['peer']}  ts={obj['ts']}")
         elif log_type == "update":
             message = (
                 f"⏱ {obj['start']:.1f} → {obj['end']:.1f}"
@@ -103,7 +105,7 @@ class Logger:
         elif log_type == "summary":
             self.write(
                 "\n━ SUMMARY ━\n"
-                f"  {self.mode.upper()} {self.direction.upper()}\n"
+                f"  {self.mode.upper()} {obj.get('direction', '').upper()}\n"
                 f"  {obj.get('sender', '')} → {obj.get('receiver', '')}\n"
                 f"  duration : {obj['seconds']:.2f} sec\n"
                 f"  data     : {human_readable_bytes(obj['bytes'])}\n"

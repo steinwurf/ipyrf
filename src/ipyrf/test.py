@@ -120,6 +120,7 @@ class IPyrfClient:
         enable_latency=True,
         length=None,
         bind_dev=None,
+        reverse=False,
     ):
         """
         Run ipyrf as a UDP client.
@@ -132,6 +133,7 @@ class IPyrfClient:
             enable_latency: Whether to enable latency measurements.
             length: Optional packet length.
             bind_dev: Optional network interface name to bind to.
+            reverse: If True, the server sends and this client receives.
         """
         args = [
             "udp",
@@ -150,6 +152,8 @@ class IPyrfClient:
             args += ["-l", str(length)]
         if bind_dev is not None:
             args += ["--bind-dev", str(bind_dev)]
+        if reverse:
+            args += ["--reverse"]
         self.__run(args)
 
     def run_tcp_client(
@@ -161,6 +165,7 @@ class IPyrfClient:
         bandwidth=None,
         TCP_MAXSEG=None,
         bind_dev=None,
+        reverse=False,
     ):
         """
         Run ipyrf as a TCP client.
@@ -174,6 +179,7 @@ class IPyrfClient:
                        10 Mbps).
             TCP_MAXSEG: Optional TCP maximum segment size.
             bind_dev: Optional network interface name to bind to.
+            reverse: If True, the server sends and this client receives.
         """
         args = [
             "tcp",
@@ -192,6 +198,8 @@ class IPyrfClient:
             args += ["--set-mss", str(TCP_MAXSEG)]
         if bind_dev is not None:
             args += ["--bind-dev", str(bind_dev)]
+        if reverse:
+            args += ["--reverse"]
         self.__run(args)
 
     def __run(self, args):
@@ -279,6 +287,8 @@ class CheckCriteria:
     Tunable rules for deciding whether a run was successful.
 
     If mode is None, the checker infers it from summaries ("tcp"/"udp").
+    Set reverse=True when the client used --reverse (server sends,
+    client receives).
     """
 
     mode: Optional[str] = None
@@ -291,11 +301,20 @@ class CheckCriteria:
     max_lost_packets: Optional[int] = None
     min_packets: Optional[int] = None  # absolute minimum packets
     server_bps_ratio_of_target: Optional[float] = None
+    reverse: bool = False
     # Allowed stop reasons
-    allow_client_stop_reasons: Set[str] = field(default_factory=lambda: {"duration"})
-    allow_server_stop_reasons: Set[str] = field(
-        default_factory=lambda: {"end-of-test", "inactivity"}
-    )
+    allow_client_stop_reasons: Set[str] = field(default_factory=set)
+    allow_server_stop_reasons: Set[str] = field(default_factory=set)
+
+    def __post_init__(self):
+        if not self.allow_client_stop_reasons:
+            self.allow_client_stop_reasons = (
+                {"end-of-test", "inactivity"} if self.reverse else {"duration"}
+            )
+        if not self.allow_server_stop_reasons:
+            self.allow_server_stop_reasons = (
+                {"duration"} if self.reverse else {"end-of-test", "inactivity"}
+            )
 
     def evaluate(
         self, server: Dict[str, Any], client: Dict[str, Any]
@@ -322,17 +341,29 @@ class CheckCriteria:
             reasons.append("Could not determine mode (tcp/udp) from summaries.")
             return False, reasons
 
-        if client.get("direction") != "tx":
-            reasons.append(
-                f"Client direction is not 'tx': " f"{client.get('direction')}"
-            )
-            return False, reasons
+        if self.reverse:
+            if client.get("direction") != "rx":
+                reasons.append(
+                    f"Client direction is not 'rx': " f"{client.get('direction')}"
+                )
+                return False, reasons
+            if server.get("direction") != "tx":
+                reasons.append(
+                    f"Server direction is not 'tx': " f"{server.get('direction')}"
+                )
+                return False, reasons
+        else:
+            if client.get("direction") != "tx":
+                reasons.append(
+                    f"Client direction is not 'tx': " f"{client.get('direction')}"
+                )
+                return False, reasons
 
-        if server.get("direction") != "rx":
-            reasons.append(
-                f"Server direction is not 'rx': " f"{server.get('direction')}"
-            )
-            return False, reasons
+            if server.get("direction") != "rx":
+                reasons.append(
+                    f"Server direction is not 'rx': " f"{server.get('direction')}"
+                )
+                return False, reasons
 
         if server.get("type") != "summary" or client.get("type") != "summary":
             reasons.append("Missing summary object(s).")

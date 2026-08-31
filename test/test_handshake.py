@@ -8,13 +8,17 @@ from ipyrf.handshake import (
     ACTION_DATA,
     ACTION_REVERSE,
     ACTION_UNKNOWN,
+    REVERSE_CONFIG_SIZE,
     TCP_FLAG_CONFIG,
     TCP_FLAG_REVERSE,
     UDP_CONTROL_FLAG,
     UDP_CONTROL_SEQ_CONFIG,
     UDP_CONTROL_SEQ_REVERSE,
+    ReverseConfig,
     classify_tcp_flag,
     classify_udp_first,
+    pack_reverse_config,
+    unpack_reverse_config,
 )
 from ipyrf.logger import Logger
 from ipyrf.tcp import (
@@ -32,6 +36,40 @@ from ipyrf.udp import (
     classify_first_packet,
     parse_udp_packet,
 )
+
+
+def test_reverse_config_roundtrip():
+    config = ReverseConfig(
+        duration_seconds=5.0, bandwidth_bps=10e6, payload_len=1200
+    )
+    packed = pack_reverse_config(config)
+    assert len(packed) == REVERSE_CONFIG_SIZE
+    got = unpack_reverse_config(packed)
+    assert got.duration_seconds == 5.0
+    assert got.bandwidth_bps == 10e6
+    assert got.payload_len == 1200
+
+    unlimited = unpack_reverse_config(
+        pack_reverse_config(ReverseConfig(duration_seconds=1.0))
+    )
+    assert unlimited.bandwidth_bps is None
+    assert unlimited.payload_len == 0
+
+
+def test_reverse_config_rejects_truncated_and_unknown_version():
+    try:
+        unpack_reverse_config(b"\x00")
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "truncated reverse config" in str(e)
+
+    packed = bytearray(pack_reverse_config(ReverseConfig(duration_seconds=1.0)))
+    packed[0] = 99
+    try:
+        unpack_reverse_config(bytes(packed))
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "unsupported reverse config version" in str(e)
 
 
 def test_tcp_latency_flags_are_data():
@@ -139,7 +177,7 @@ def test_tcp_receiver_first_record_is_part_of_the_test(tmp_path):
     assert receiver.latency.enabled
 
 
-def test_tcp_server_rejects_reserved_reverse_first_record(tmp_path, free_port):
+def test_tcp_server_rejects_truncated_reverse_config(tmp_path, free_port):
     from ipyrf import tcp
 
     log_path = tmp_path / "server.json"
@@ -168,11 +206,10 @@ def test_tcp_server_rejects_reserved_reverse_first_record(tmp_path, free_port):
             thread.join(timeout=1)
 
     summary = next(obj for obj in _log_lines(log_path) if obj["type"] == "summary")
-    assert summary["stop_reason"] == "unsupported first-packet action: reverse"
-    assert summary["bytes"] == TCP_HDR.size
+    assert "truncated reverse config" in summary["stop_reason"]
 
 
-def test_udp_server_rejects_reserved_reverse_first_packet(tmp_path, free_port):
+def test_udp_server_rejects_invalid_reverse_config(tmp_path, free_port):
     from ipyrf import udp
 
     log_path = tmp_path / "udp.json"
@@ -204,6 +241,6 @@ def test_udp_server_rejects_reserved_reverse_first_packet(tmp_path, free_port):
             thread.join(timeout=1)
 
     summary = next(obj for obj in _log_lines(log_path) if obj["type"] == "summary")
-    assert summary["stop_reason"] == "unsupported first-packet action: reverse"
+    assert "unsupported reverse config version" in summary["stop_reason"]
     assert summary["bytes"] == 0
     assert summary["packets"] == 0

@@ -8,7 +8,6 @@ Latest
 ------
 * Major: Changes has caused the header format to change, so older
   versions of ipyrf cannot operate with the new version of ipyrf.
-* Patch: Added a GitHub Action to run the unit tests.
 * Minor: Added ``--bind-dev DEVICE`` for TCP/UDP clients to bind the
   transmit socket to a network interface.
 * Minor: Added ``--inactivity-timeout`` for UDP servers to configure how
@@ -27,11 +26,13 @@ Latest
   and ``--packet-record`` CSV include ``event_id`` (1-based event/period
   index, or ``0`` when unset). TCP records include the payload length so
   variable-sized sends work.
-* Patch: Split TCP and UDP client and server into first-packet,
-  send, and receive steps so a later reverse/config handshake can
-  reuse the data path. The first packet is still test payload.
+* Minor: Added ``-R`` / ``--reverse`` for TCP/UDP clients. The client
+  still connects; the first packet tells the server to send using the
+  client's ``--bandwidth`` and ``--time`` (and UDP ``-l``). Not
+  supported with ``--interactive`` or ``--traffic-pattern``.
 * Patch: TCP pacing now accounts for the per-record header so
   ``--bandwidth`` matches the measured socket rate.
+* Patch: Added a GitHub Action to run the unit tests.
 
 1.5.1
 -----

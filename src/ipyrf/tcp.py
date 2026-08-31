@@ -6,10 +6,18 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from .handshake import ACTION_DATA, classify_tcp_flag
+from .handshake import (
+    ACTION_DATA,
+    ACTION_REVERSE,
+    TCP_FLAG_REVERSE,
+    ReverseConfig,
+    classify_tcp_flag,
+    pack_reverse_config,
+    unpack_reverse_config,
+)
 from .latency import LatencyTracker
 from .logger import Logger
-from .controllers import BasePacingController
+from .controllers import BasePacingController, StaticPacingController
 from .utils import bind_to_device
 
 # TCP record header: latency flag, payload length, send timestamp (ns), event id
@@ -27,6 +35,7 @@ class TcpRecord:
     payload_len: int
     timestamp_ns: int
     event_id: int
+    payload: bytes = b""
 
 
 def set_tcp_mss(sock: socket.socket, mss: int):
@@ -38,11 +47,13 @@ def set_tcp_mss(sock: socket.socket, mss: int):
 
 def parse_tcp_record(
     recv_buffer: bytearray,
+    keep_payload: bool = False,
 ) -> tuple[Optional[TcpRecord], Optional[str]]:
     """Consume one complete record from ``recv_buffer``.
 
     Returns ``(record, None)`` if a record was consumed, ``(None, None)``
     if more bytes are needed, or ``(None, stop_reason)`` on error.
+    ``keep_payload`` copies the record body (needed for reverse config).
     """
     if len(recv_buffer) < TCP_HDR_SIZE:
         return None, None
@@ -54,8 +65,40 @@ def parse_tcp_record(
     record_size = TCP_HDR_SIZE + payload_len
     if len(recv_buffer) < record_size:
         return None, None
+    payload = (
+        bytes(recv_buffer[TCP_HDR_SIZE:record_size]) if keep_payload else b""
+    )
     del recv_buffer[:record_size]
-    return TcpRecord(latency_flag, payload_len, timestamp_ns, event_id), None
+    return (
+        TcpRecord(latency_flag, payload_len, timestamp_ns, event_id, payload),
+        None,
+    )
+
+
+def write_tcp_record(
+    sock: socket.socket,
+    latency_flag: int,
+    payload: bytes,
+    timestamp_ns: Optional[int] = None,
+    event_id: int = 0,
+) -> Optional[str]:
+    """Send one framed record. Returns a stop reason, or None on success."""
+    if timestamp_ns is None:
+        timestamp_ns = time.time_ns()
+    header = TCP_HDR.pack(latency_flag, len(payload), timestamp_ns, event_id)
+    for chunk in (header, payload):
+        offset = 0
+        while offset < len(chunk):
+            try:
+                n = sock.send(chunk[offset:])
+            except (BlockingIOError, InterruptedError):
+                continue
+            except Exception as e:
+                return f"error sending: {e}"
+            if n <= 0:
+                return "send returned 0"
+            offset += n
+    return None
 
 
 def classify_first_record(record: Optional[TcpRecord]) -> str:
@@ -110,7 +153,7 @@ class TcpReceiver:
 
     def read_first_record(self) -> Optional[TcpRecord]:
         """Block until one complete record, EOF, or a parse error."""
-        return self._read_record()
+        return self._read_record(keep_payload=True)
 
     def run(self, first: Optional[TcpRecord] = None) -> None:
         """Receive test data. ``first`` is included when it is payload."""
@@ -144,13 +187,16 @@ class TcpReceiver:
             "bytes": self.bytes_recv,
             "bits_per_second": (self.bytes_recv * 8.0) / dur if dur > 0 else 0.0,
             "stop_reason": self.stop_reason,
+            "direction": "rx",
         }
         summary_fields.update(self.latency.summary_fields())
         self.log.summary(**summary_fields)
 
-    def _read_record(self) -> Optional[TcpRecord]:
+    def _read_record(self, keep_payload: bool = False) -> Optional[TcpRecord]:
         while True:
-            record, error = parse_tcp_record(self.recv_buffer)
+            record, error = parse_tcp_record(
+                self.recv_buffer, keep_payload=keep_payload
+            )
             if error is not None:
                 self.stop_reason = error
                 return None
@@ -262,6 +308,9 @@ class TcpSender:
 
     def run(self) -> None:
         """Send test data. The first record is payload (current behavior)."""
+        # Handshake uses a read timeout on the accepted connection. Timeout
+        # mode wraps every send() in poll(), which cuts reverse throughput.
+        self.sock.settimeout(None)
         self.start = time.time()
         self.last_ts = self.start
         self.controller.start()
@@ -313,6 +362,7 @@ class TcpSender:
         self.sock.close()
         actual_duration = max(1e-9, time.time() - self.start)
         self.log.summary(
+            direction="rx",
             receiver=f"{self.host}:{self.port}",
             seconds=actual_duration,
             bytes=self.bytes_sent,
@@ -356,6 +406,15 @@ def server(
     try:
         conn, addr = srv.accept()
         accept_ts = time.time()
+    except Exception as e:
+        log.summary(
+            receiver=f"{bind_addr}:{port}",
+            stop_reason=f"accept failed: {e}",
+            seconds=0,
+            bytes=0,
+            bits_per_second=0,
+        )
+        return
     finally:
         srv.close()
     _prepare_server_connection(conn, congestion_control)
@@ -367,17 +426,56 @@ def server(
     action = classify_first_record(first)
 
     if action == ACTION_DATA:
-        # First record is test payload (or the peer closed before one).
         receiver.begin(accept_ts)
         if first is not None:
             receiver.run(first=first)
-    else:
-        # Future: ACTION_REVERSE -> TcpSender(conn, ...).run()
-        # Future: ACTION_CONFIG -> read config, then send or receive.
-        receiver.stop_reason = f"unsupported first-packet action: {action}"
+        receiver.summarize()
+        conn.close()
+        return
 
+    if action == ACTION_REVERSE:
+        _run_tcp_reverse_send(
+            conn, log, first, addr, interval_seconds
+        )
+        return
+
+    receiver.stop_reason = f"unsupported first-packet action: {action}"
     receiver.summarize()
     conn.close()
+
+
+def _run_tcp_reverse_send(
+    conn: socket.socket,
+    log: Logger,
+    first: Optional[TcpRecord],
+    addr: tuple[str, int],
+    interval_seconds: float,
+) -> None:
+    payload = b"" if first is None else first.payload
+    try:
+        config = unpack_reverse_config(payload)
+    except ValueError as e:
+        log.summary(
+            direction="tx",
+            receiver=f"{addr[0]}:{addr[1]}",
+            sender=f"{addr[0]}:{addr[1]}",
+            seconds=0,
+            bytes=0,
+            bits_per_second=0,
+            stop_reason=str(e),
+        )
+        conn.close()
+        return
+
+    controller = StaticPacingController(
+        config.bandwidth_bps,
+        config.duration_seconds,
+        interval_seconds,
+        header_overhead=TCP_HDR_SIZE,
+    )
+    sender = TcpSender(conn, log, controller, False, addr[0], addr[1])
+    sender.run()
+    sender.finish()
 
 
 def client(
@@ -386,9 +484,11 @@ def client(
     port: int,
     congestion_control: Optional[str],
     set_mss: Optional[int],
-    controller: BasePacingController,
+    controller: Optional[BasePacingController] = None,
     enable_latency: bool = False,
     bind_dev: Optional[str] = None,
+    reverse_config: Optional[ReverseConfig] = None,
+    interval_seconds: float = 1.0,
 ):
     sock = prepare_client_socket(
         log, host, port, congestion_control, set_mss, bind_dev=bind_dev
@@ -397,12 +497,50 @@ def client(
         return
 
     log.start(host, port)
+    if reverse_config is not None:
+        _run_tcp_reverse_receive(sock, log, host, port, reverse_config, interval_seconds)
+        return
+
+    if controller is None:
+        raise ValueError("controller is required unless reverse_config is set")
     sender = TcpSender(sock, log, controller, enable_latency, host, port)
-    # First record is test payload. Future reverse/config would send a
-    # control record via sender.send_record(..., latency_flag=...) first,
-    # then run TcpReceiver on this socket instead of sender.run().
     sender.run()
     sender.finish()
+
+
+def _run_tcp_reverse_receive(
+    sock: socket.socket,
+    log: Logger,
+    host: str,
+    port: int,
+    reverse_config: ReverseConfig,
+    interval_seconds: float,
+) -> None:
+    err = write_tcp_record(
+        sock, TCP_FLAG_REVERSE, pack_reverse_config(reverse_config)
+    )
+    if err is not None:
+        log.summary(
+            direction="rx",
+            receiver=f"{host}:{port}",
+            seconds=0,
+            bytes=0,
+            bits_per_second=0,
+            stop_reason=err,
+        )
+        sock.close()
+        return
+
+    sock.settimeout(1.0)
+    local = sock.getsockname()
+    peer = sock.getpeername()
+    receiver = TcpReceiver(
+        sock, log, interval_seconds, local[0], local[1], peer
+    )
+    receiver.begin()
+    receiver.run()
+    receiver.summarize()
+    sock.close()
 
 
 def _prepare_server_connection(

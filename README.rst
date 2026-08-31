@@ -98,6 +98,7 @@ TCP client:
    ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
    ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --loops 3
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --bind-dev eth0
+   ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --bandwidth 50M --reverse
 
 UDP server:
 
@@ -115,6 +116,18 @@ UDP client (with bandwidth cap and optional payload size):
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --loops 3
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --bind-dev eth0
+   ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --reverse
+
+Reverse mode
+------------
+
+Pass ``-R`` / ``--reverse`` on a TCP or UDP client so the server sends and
+the client receives. The client still initiates the connection; the first
+packet tells the server to transmit using the client's ``--bandwidth`` and
+``--time`` (and UDP ``-l``). This is the same role split as iperf3 ``-R``.
+
+``--reverse`` cannot be combined with ``--interactive`` or
+``--traffic-pattern``.
 
 Traffic patterns
 ----------------
@@ -268,6 +281,8 @@ TCP-specific options:
 - ``--set-mss``: Set approximate MSS via ``TCP_MAXSEG``
 - ``--bind-dev DEVICE``: Bind the client socket to a network interface
   (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
+- ``--reverse`` / ``-R``: Server sends, client receives. Forwards
+  ``--bandwidth`` and ``--time`` to the server
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
@@ -287,6 +302,8 @@ UDP-specific options:
   without receiving packets (default 2.0)
 - ``--bind-dev DEVICE``: Bind the client socket to a network interface
   (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
+- ``--reverse`` / ``-R``: Server sends, client receives. Forwards
+  ``--bandwidth``, ``--time``, and ``-l`` to the server
 - ``--interactive``: Enable interactive pacing controls
 - ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 

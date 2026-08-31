@@ -5,10 +5,20 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from .handshake import ACTION_DATA, UDP_CONTROL_FLAG, classify_udp_first
+from .handshake import (
+    ACTION_DATA,
+    ACTION_REVERSE,
+    UDP_CONTROL_FLAG,
+    UDP_CONTROL_SEQ_REVERSE,
+    ReverseConfig,
+    classify_udp_first,
+    pack_reverse_config,
+    reverse_udp_payload_len,
+    unpack_reverse_config,
+)
 from .latency import LatencyTracker
 from .logger import Logger
-from .controllers import BasePacingController
+from .controllers import BasePacingController, StaticPacingController
 from .packet_recorder import PacketRecorder
 from .utils import bind_to_device
 
@@ -58,10 +68,26 @@ def classify_first_packet(packet: UdpPacket) -> str:
     """Return the first-packet action for ``packet``.
 
     Datagrams without :data:`UDP_CONTROL_FLAG` are test payload (current
-    behavior), including FIN. Control datagrams are reserved for
-    reverse/config (see :mod:`ipyrf.handshake`).
+    behavior), including FIN. Reverse control datagrams carry a
+    :class:`ReverseConfig` after the UDP header.
     """
     return classify_udp_first(packet.flags, packet.seq)
+
+
+def write_udp_control(
+    sock: socket.socket, seq: int, payload: bytes, flags: int = UDP_CONTROL_FLAG
+) -> Optional[str]:
+    """Send one control datagram. Returns a stop reason, or None on success."""
+    buf = bytearray(UDP_HDR.size + len(payload))
+    UDP_HDR.pack_into(buf, 0, seq, time.time_ns(), flags, 0)
+    buf[UDP_HDR.size :] = payload
+    try:
+        n = sock.send(buf)
+    except Exception as e:
+        return f"error sending packet: {e}"
+    if n <= 0:
+        return "send returned 0"
+    return None
 
 
 class UdpReceiver:
@@ -154,6 +180,7 @@ class UdpReceiver:
         )
 
         summary_fields = {
+            "direction": "rx",
             "receiver": f"{self.bind_addr}:{self.port}",
             "sender": (
                 None
@@ -178,7 +205,7 @@ class UdpReceiver:
 
     def _begin(self, packet: UdpPacket) -> None:
         now = packet.received_ns / 1e9
-        self.log.test(packet.peer[0], packet.peer[1], now)
+        self.log.test("rx", packet.peer[0], packet.peer[1], now)
         self.active = True
         self.start = now
         self.last_ts = now
@@ -302,6 +329,7 @@ class UdpSender:
 
     def run(self) -> None:
         """Send test data. The first datagram is payload (current behavior)."""
+        self.sock.settimeout(None)
         self.start = time.time()
         self.last_ts = self.start
         self.controller.start()
@@ -318,7 +346,7 @@ class UdpSender:
 
             try:
                 if self.bytes_sent == 0:
-                    self.log.test(self.host, self.port, self.start)
+                    self.log.test("tx", self.host, self.port, self.start)
                 n = self.send_datagram(send_len, flags=flags)
             except Exception as e:
                 self.stop_reason = f"error sending packet: {e}"
@@ -357,6 +385,7 @@ class UdpSender:
     def summarize(self) -> None:
         dur = max(1e-9, time.time() - self.start)
         self.log.summary(
+            direction="tx",
             receiver=f"{self.host}:{self.port}",
             seconds=dur,
             bytes=self.bytes_sent,
@@ -395,11 +424,11 @@ def server(
         first = receiver.wait_first()
         action = classify_first_packet(first)
         if action == ACTION_DATA:
-            # First datagram is test payload (including a lone FIN).
             receiver.run(first)
+        elif action == ACTION_REVERSE:
+            _run_udp_reverse_send(sock, log, receiver, first, interval_seconds)
+            return
         else:
-            # Future: ACTION_REVERSE -> UdpSender(sock, ...).run()
-            # Future: ACTION_CONFIG -> read config, then send or receive.
             receiver.src_peer = first.peer
             receiver.stop_reason = f"unsupported first-packet action: {action}"
     finally:
@@ -408,14 +437,55 @@ def server(
     receiver.summarize()
 
 
+def _run_udp_reverse_send(
+    sock: socket.socket,
+    log: Logger,
+    receiver: UdpReceiver,
+    first: UdpPacket,
+    interval_seconds: float,
+) -> None:
+    payload = bytes(receiver.recv_buffer[UDP_HDR.size : first.size])
+    try:
+        config = unpack_reverse_config(payload)
+    except ValueError as e:
+        receiver.src_peer = first.peer
+        receiver.stop_reason = str(e)
+        receiver.close_recorder()
+        receiver.summarize()
+        return
+
+    try:
+        sock.connect(first.peer)
+    except Exception as e:
+        receiver.src_peer = first.peer
+        receiver.stop_reason = f"connect to peer failed: {e}"
+        receiver.close_recorder()
+        receiver.summarize()
+        return
+
+    payload_len = reverse_udp_payload_len(config)
+    controller = StaticPacingController(
+        config.bandwidth_bps, config.duration_seconds, interval_seconds
+    )
+    sender = UdpSender(
+        sock, log, first.peer[0], first.peer[1], payload_len, controller, False
+    )
+    sender.run()
+    sender.send_fin()
+    sender.summarize()
+
+
 def client(
     log: Logger,
     host: str,
     port: int,
     payload_len: int,
-    controller: BasePacingController,
+    controller: Optional[BasePacingController] = None,
     enable_latency: bool = False,
     bind_dev: Optional[str] = None,
+    reverse_config: Optional[ReverseConfig] = None,
+    interval_seconds: float = 1.0,
+    inactivity_timeout: float = 2.0,
 ):
     if payload_len < UDP_HDR.size:
         payload_len = UDP_HDR.size
@@ -426,12 +496,83 @@ def client(
     sock.connect((host, port))
 
     log.start(host, port)
+    if reverse_config is not None:
+        _run_udp_reverse_receive(
+            sock,
+            log,
+            host,
+            port,
+            reverse_config,
+            payload_len,
+            interval_seconds,
+            inactivity_timeout,
+        )
+        return
+
+    if controller is None:
+        raise ValueError("controller is required unless reverse_config is set")
     sender = UdpSender(
         sock, log, host, port, payload_len, controller, enable_latency
     )
-    # First datagram is test payload. Future reverse/config would send a
-    # control datagram via sender.send_datagram(..., flags=UDP_CONTROL_FLAG)
-    # first, then run UdpReceiver on this socket instead of sender.run().
     sender.run()
     sender.send_fin()
     sender.summarize()
+
+
+def _run_udp_reverse_receive(
+    sock: socket.socket,
+    log: Logger,
+    host: str,
+    port: int,
+    reverse_config: ReverseConfig,
+    payload_len: int,
+    interval_seconds: float,
+    inactivity_timeout: float,
+) -> None:
+    config = ReverseConfig(
+        duration_seconds=reverse_config.duration_seconds,
+        bandwidth_bps=reverse_config.bandwidth_bps,
+        payload_len=reverse_config.payload_len or payload_len,
+    )
+    packed = pack_reverse_config(config)
+    last_err = None
+    sent = False
+    for _ in range(3):
+        last_err = write_udp_control(sock, UDP_CONTROL_SEQ_REVERSE, packed)
+        if last_err is None:
+            sent = True
+        time.sleep(0.01)
+    if not sent:
+        log.summary(
+            direction="rx",
+            receiver=f"{host}:{port}",
+            seconds=0,
+            bytes=0,
+            packets=0,
+            bits_per_second=0,
+            stop_reason=last_err or "error sending packet",
+        )
+        return
+
+    sock.settimeout(inactivity_timeout)
+    local = sock.getsockname()
+    receiver = UdpReceiver(
+        sock,
+        log,
+        interval_seconds,
+        local[0],
+        local[1],
+        inactivity_timeout=inactivity_timeout,
+    )
+    try:
+        first = receiver.wait_first()
+        if classify_first_packet(first) != ACTION_DATA:
+            receiver.src_peer = first.peer
+            receiver.stop_reason = (
+                f"unexpected first-packet action: {classify_first_packet(first)}"
+            )
+        else:
+            receiver.run(first)
+    finally:
+        receiver.close_recorder()
+    receiver.summarize()
