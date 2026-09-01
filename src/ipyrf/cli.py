@@ -64,7 +64,6 @@ def _main():
         action="store_true",
         default=False,
     )
-    common.add_argument("--interval", type=float, default=1.0, help="Stats interval")
 
     subp = p.add_subparsers(dest="protocol", required=True)
 
@@ -414,7 +413,6 @@ def _main():
                 log,
                 args.address,
                 args.port,
-                args.interval,
                 packet_record_path=args.packet_record,
                 inactivity_timeout=args.inactivity_timeout,
                 trace_dir=args.trace_dir,
@@ -427,8 +425,8 @@ def _main():
                     args.port,
                     args.length,
                     reverse_config=ReverseConfig(
-                        duration_seconds=(
-                            0.0 if reverse_trace_name else float(args.time)
+                        duration_ms=(
+                            0 if not args.time else int(args.time * 1000)
                         ),
                         bandwidth_bps=args.bandwidth,
                         payload_len=args.length,
@@ -436,13 +434,11 @@ def _main():
                         loops=loops,
                     ),
                     bind_dev=args.bind_dev,
-                    interval_seconds=args.interval,
                 )
             else:
                 if pattern is not None:
                     controller = TrafficPatternController(
                         pattern,
-                        args.interval,
                         bandwidth_bps=args.bandwidth,
                     )
                 else:
@@ -452,11 +448,9 @@ def _main():
                         else args.bandwidth
                     )
                     if args.interactive:
-                        controller = InteractiveController(bw, args.interval)
+                        controller = InteractiveController(bw)
                     else:
-                        controller = StaticPacingController(
-                            bw, args.time, args.interval
-                        )
+                        controller = StaticPacingController(bw, args.time)
                 udp.client(
                     log,
                     args.address,
@@ -473,8 +467,7 @@ def _main():
                 log,
                 args.address,
                 args.port,
-                args.interval,
-                args.congestion_control,
+                congestion_control=args.congestion_control,
                 trace_dir=args.trace_dir,
             )
         else:
@@ -486,15 +479,14 @@ def _main():
                     args.congestion_control,
                     args.set_mss,
                     reverse_config=ReverseConfig(
-                        duration_seconds=(
-                            0.0 if reverse_trace_name else float(args.time)
+                        duration_ms=(
+                            0 if reverse_trace_name else int(args.time) * 1000
                         ),
                         bandwidth_bps=args.bandwidth,
                         traffic_pattern_name=reverse_trace_name,
                         loops=loops,
                     ),
                     bind_dev=args.bind_dev,
-                    interval_seconds=args.interval,
                 )
             else:
                 # TCP record header is sent in addition to the payload returned by
@@ -504,7 +496,6 @@ def _main():
                 if pattern is not None:
                     controller = TrafficPatternController(
                         pattern,
-                        args.interval,
                         bandwidth_bps=args.bandwidth,
                         header_overhead=tcp_overhead,
                     )
@@ -512,14 +503,12 @@ def _main():
                     # If no bandwidth provided, controller will act as unlimited until adjusted
                     controller = InteractiveController(
                         args.bandwidth,
-                        args.interval,
                         header_overhead=tcp_overhead,
                     )
                 else:
                     controller = StaticPacingController(
                         args.bandwidth,
                         args.time,
-                        args.interval,
                         header_overhead=tcp_overhead,
                     )
                 tcp.client(

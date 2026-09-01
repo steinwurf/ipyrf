@@ -108,7 +108,6 @@ class UdpReceiver:
         self,
         sock: socket.socket,
         log: Logger,
-        interval_seconds: float,
         bind_addr: str,
         port: int,
         packet_record_path: Optional[str] = None,
@@ -116,7 +115,6 @@ class UdpReceiver:
     ):
         self.sock = sock
         self.log = log
-        self.interval_seconds = interval_seconds
         self.bind_addr = bind_addr
         self.port = port
         self.inactivity_timeout = inactivity_timeout
@@ -249,7 +247,7 @@ class UdpReceiver:
         if self.latency.enabled:
             self.latency.observe(packet.timestamp_ns, now_ns)
 
-        if (now - self.last_ts) >= self.interval_seconds:
+        if (now - self.last_ts) >= 1.0:
             sent_packets = self.last_seq_seen - self.last_seq_seen_last
             received = self.total_pkts - self.last_pkts
             lost = max(0, sent_packets - received)
@@ -368,7 +366,7 @@ class UdpSender:
                 self.pkts_sent += 1
                 self.seq += 1
                 now = time.time()
-                if (now - self.last_ts) >= self.controller.interval_seconds:
+                if (now - self.last_ts) >= 1.0:
                     extra = self.controller.get_update_fields()
                     self.log.update(
                         start_ts=self.last_ts,
@@ -417,7 +415,6 @@ def server(
     log: Logger,
     bind_addr: str,
     port: int,
-    interval_seconds: float,
     packet_record_path: Optional[str] = None,
     inactivity_timeout: float = 2.0,
     trace_dir: Optional[str] = None,
@@ -431,7 +428,6 @@ def server(
     receiver = UdpReceiver(
         sock,
         log,
-        interval_seconds,
         bind_addr,
         port,
         packet_record_path=packet_record_path,
@@ -448,7 +444,6 @@ def server(
                 log,
                 receiver,
                 first,
-                interval_seconds,
                 trace_dir=trace_dir,
             )
             return
@@ -468,7 +463,6 @@ def _run_udp_reverse_send(
     log: Logger,
     receiver: UdpReceiver,
     first: UdpPacket,
-    interval_seconds: float,
     trace_dir: Optional[str] = None,
 ) -> None:
     payload = bytes(receiver.recv_buffer[UDP_HDR.size : first.size])
@@ -484,7 +478,7 @@ def _run_udp_reverse_send(
     try:
         config = unpack_reverse_config(payload)
         controller = controller_from_reverse_config(
-            config, interval_seconds, trace_dir=trace_dir
+            config, trace_dir=trace_dir
         )
     except ValueError as e:
         _send_udp_reverse_error(sock, str(e))
@@ -519,7 +513,6 @@ def client(
     enable_latency: bool = False,
     bind_dev: Optional[str] = None,
     reverse_config: Optional[ReverseConfig] = None,
-    interval_seconds: float = 1.0,
     inactivity_timeout: float = 2.0,
 ):
     if payload_len < UDP_HDR.size:
@@ -538,8 +531,6 @@ def client(
             host,
             port,
             reverse_config,
-            payload_len,
-            interval_seconds,
             inactivity_timeout,
         )
         return
@@ -560,18 +551,9 @@ def _run_udp_reverse_receive(
     host: str,
     port: int,
     reverse_config: ReverseConfig,
-    payload_len: int,
-    interval_seconds: float,
     inactivity_timeout: float,
 ) -> None:
-    config = ReverseConfig(
-        duration_seconds=reverse_config.duration_seconds,
-        bandwidth_bps=reverse_config.bandwidth_bps,
-        payload_len=reverse_config.payload_len or payload_len,
-        traffic_pattern_name=reverse_config.traffic_pattern_name,
-        loops=reverse_config.loops,
-    )
-    packed = pack_reverse_config(config)
+    packed = pack_reverse_config(reverse_config)
     last_err = None
     sent = False
     for _ in range(3):
@@ -596,7 +578,6 @@ def _run_udp_reverse_receive(
     receiver = UdpReceiver(
         sock,
         log,
-        interval_seconds,
         local[0],
         local[1],
         inactivity_timeout=inactivity_timeout,

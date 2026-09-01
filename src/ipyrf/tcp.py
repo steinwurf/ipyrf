@@ -131,14 +131,12 @@ class TcpReceiver:
         self,
         conn: socket.socket,
         log: Logger,
-        interval_seconds: float,
         bind_addr: str,
         port: int,
         peer: tuple[str, int],
     ):
         self.conn = conn
         self.log = log
-        self.interval_seconds = interval_seconds
         self.bind_addr = bind_addr
         self.port = port
         self.peer = peer
@@ -246,7 +244,7 @@ class TcpReceiver:
             self.latency.observe(record.timestamp_ns)
 
     def _maybe_interval_log(self, now: float) -> None:
-        if (now - self.last_ts) < self.interval_seconds:
+        if (now - self.last_ts) < 1.0:
             return
         update_fields = {
             "start_ts": self.last_ts,
@@ -346,7 +344,7 @@ class TcpSender:
                 sent = self.send_record(to_send)
 
                 now = time.time()
-                if (now - self.last_ts) >= self.controller.interval_seconds:
+                if (now - self.last_ts) >= 1.0:
                     self.log.update(
                         start_ts=self.last_ts,
                         end_ts=now,
@@ -410,8 +408,7 @@ def server(
     log: Logger,
     bind_addr: str,
     port: int,
-    interval_seconds: float,
-    congestion_control: Optional[str],
+    congestion_control: Optional[str] = None,
     trace_dir: Optional[str] = None,
 ):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -446,7 +443,7 @@ def server(
     _prepare_server_connection(conn, congestion_control)
 
     receiver = TcpReceiver(
-        conn, log, interval_seconds, bind_addr, port, addr
+        conn, log, bind_addr, port, addr
     )
     first = receiver.read_first_record()
     if receiver.stop_reason == "interrupted":
@@ -465,7 +462,7 @@ def server(
 
     if action == ACTION_REVERSE:
         _run_tcp_reverse_send(
-            conn, log, first, addr, interval_seconds, trace_dir=trace_dir
+            conn, log, first, addr, trace_dir=trace_dir
         )
         return
 
@@ -479,7 +476,6 @@ def _run_tcp_reverse_send(
     log: Logger,
     first: Optional[TcpRecord],
     addr: tuple[str, int],
-    interval_seconds: float,
     trace_dir: Optional[str] = None,
 ) -> None:
     payload = b"" if first is None else first.payload
@@ -487,7 +483,6 @@ def _run_tcp_reverse_send(
         config = unpack_reverse_config(payload)
         controller = controller_from_reverse_config(
             config,
-            interval_seconds,
             header_overhead=TCP_HDR_SIZE,
             trace_dir=trace_dir,
         )
@@ -520,7 +515,6 @@ def client(
     enable_latency: bool = False,
     bind_dev: Optional[str] = None,
     reverse_config: Optional[ReverseConfig] = None,
-    interval_seconds: float = 1.0,
 ):
     sock = prepare_client_socket(
         log, host, port, congestion_control, set_mss, bind_dev=bind_dev
@@ -530,7 +524,7 @@ def client(
 
     log.start(host, port)
     if reverse_config is not None:
-        _run_tcp_reverse_receive(sock, log, host, port, reverse_config, interval_seconds)
+        _run_tcp_reverse_receive(sock, log, host, port, reverse_config)
         return
 
     if controller is None:
@@ -546,7 +540,6 @@ def _run_tcp_reverse_receive(
     host: str,
     port: int,
     reverse_config: ReverseConfig,
-    interval_seconds: float,
 ) -> None:
     err = write_tcp_record(
         sock, TCP_FLAG_REVERSE, pack_reverse_config(reverse_config)
@@ -567,7 +560,7 @@ def _run_tcp_reverse_receive(
     local = sock.getsockname()
     peer = sock.getpeername()
     receiver = TcpReceiver(
-        sock, log, interval_seconds, local[0], local[1], peer
+        sock, log, local[0], local[1], peer
     )
     first = receiver.read_first_record()
     action = classify_first_record(first)

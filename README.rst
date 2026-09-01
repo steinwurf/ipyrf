@@ -239,7 +239,7 @@ Generation parameters / source path are stored under ``metadata``.
 Interactive mode
 ----------------
 
-You can run clients in an interactive mode that lets you adjust the pacing live using your keyboard. Use ``--interactive`` and optionally ``--interval`` (seconds between stats updates). When interactive is enabled, the same client logic is used underneath with a dynamic pacing controller.
+You can run clients in an interactive mode that lets you adjust the pacing live using your keyboard. Use ``--interactive``. When interactive is enabled, the same client logic is used underneath with a dynamic pacing controller.
 
 Controls shown in the terminal:
 
@@ -258,8 +258,8 @@ Examples:
    # TCP interactive (unlimited unless you pass --bandwidth)
    ipyrf tcp client 127.0.0.1 --port 5201 --interactive
 
-   # TCP interactive with initial pacing and custom interval
-   ipyrf tcp client 127.0.0.1 --port 5201 --bandwidth 200M --set-mss 1400 --interactive --interval 0.5
+   # TCP interactive with initial pacing
+   ipyrf tcp client 127.0.0.1 --port 5201 --bandwidth 200M --set-mss 1400 --interactive
 
    # UDP interactive (requires initial --bandwidth)
    ipyrf udp client 127.0.0.1 --port 5201 --bandwidth 50M -l 1200 --interactive
@@ -301,7 +301,6 @@ TCP-specific options:
   ``--bandwidth`` and ``--time``, or the name of ``--traffic-pattern``,
   to the server
 - ``--interactive``: Enable interactive pacing controls
-- ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
 UDP-specific options:
 
@@ -326,7 +325,6 @@ UDP-specific options:
   ``--bandwidth``, ``--time``, and ``-l``, or the name of
   ``--traffic-pattern``, to the server
 - ``--interactive``: Enable interactive pacing controls
-- ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
 Generate options:
 

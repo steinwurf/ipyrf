@@ -51,28 +51,42 @@ from ipyrf.udp import (
 
 def test_reverse_config_roundtrip():
     config = ReverseConfig(
-        duration_seconds=5.0, bandwidth_bps=10e6, payload_len=1200
+        duration_ms=5000, bandwidth_bps=10e6, payload_len=1200
     )
     packed = pack_reverse_config(config)
     assert len(packed) == REVERSE_CONFIG_SIZE
     got = unpack_reverse_config(packed)
-    assert got.duration_seconds == 5.0
+    assert got.duration_ms == 5000
     assert got.bandwidth_bps == 10e6
     assert got.payload_len == 1200
     assert got.traffic_pattern_name is None
     assert got.loops == 1
 
     unlimited = unpack_reverse_config(
-        pack_reverse_config(ReverseConfig(duration_seconds=1.0))
+        pack_reverse_config(ReverseConfig(duration_ms=1000))
     )
     assert unlimited.bandwidth_bps is None
     assert unlimited.payload_len == 0
     assert unlimited.traffic_pattern_name is None
 
+    max_ms = unpack_reverse_config(
+        pack_reverse_config(ReverseConfig(duration_ms=0xFFFFFFFF))
+    )
+    assert max_ms.duration_ms == 0xFFFFFFFF
+
+
+def test_reverse_config_rejects_invalid_duration():
+    for duration_ms in (-1, 0x100000000):
+        try:
+            pack_reverse_config(ReverseConfig(duration_ms=duration_ms))
+            assert False, f"expected ValueError for {duration_ms}"
+        except ValueError as e:
+            assert "invalid reverse duration" in str(e)
+
 
 def test_reverse_config_roundtrip_with_trace_name():
     config = ReverseConfig(
-        duration_seconds=0.0,
+        duration_ms=0,
         bandwidth_bps=50e6,
         payload_len=1200,
         traffic_pattern_name="video.json",
@@ -94,7 +108,7 @@ def test_reverse_config_rejects_path_as_trace_name():
     try:
         pack_reverse_config(
             ReverseConfig(
-                duration_seconds=0.0, traffic_pattern_name="dir/trace.json"
+                duration_ms=0, traffic_pattern_name="dir/trace.json"
             )
         )
         assert False, "expected ValueError"
@@ -102,7 +116,7 @@ def test_reverse_config_rejects_path_as_trace_name():
         assert "not a path" in str(e)
 
     packed = pack_reverse_config(
-        ReverseConfig(duration_seconds=0.0, traffic_pattern_name="ok.json")
+        ReverseConfig(duration_ms=0, traffic_pattern_name="ok.json")
     )
     # Rewrite the name bytes to include a slash while keeping name_len.
     tampered = packed[:REVERSE_CONFIG_SIZE] + b"../x.json"
@@ -118,7 +132,7 @@ def test_reverse_config_trace_name_fits_one_packet():
 
     name = "a" * MAX_TRACE_FILE_NAME_LEN
     packed = pack_reverse_config(
-        ReverseConfig(duration_seconds=0.0, traffic_pattern_name=name)
+        ReverseConfig(duration_ms=0, traffic_pattern_name=name)
     )
     assert unpack_reverse_config(packed).traffic_pattern_name == name
     assert UDP_HDR.size + len(packed) < 1200
@@ -164,7 +178,7 @@ def test_reverse_config_rejects_truncated_and_unknown_version():
     except ValueError as e:
         assert "truncated reverse config" in str(e)
 
-    packed = bytearray(pack_reverse_config(ReverseConfig(duration_seconds=1.0)))
+    packed = bytearray(pack_reverse_config(ReverseConfig(duration_ms=1000)))
     packed[0] = 99
     try:
         unpack_reverse_config(bytes(packed))
@@ -265,7 +279,7 @@ def test_tcp_receiver_first_record_is_part_of_the_test(tmp_path):
     server.settimeout(1.0)
     log_path = tmp_path / "tcp.json"
     receiver = TcpReceiver(
-        server, _logger(log_path), 1.0, "127.0.0.1", 5201, ("127.0.0.1", 1)
+        server, _logger(log_path), "127.0.0.1", 5201, ("127.0.0.1", 1)
     )
 
     payload = TCP_HDR.pack(LATENCY_ENABLED, 4, 1, 0) + b"abcd"
@@ -298,7 +312,7 @@ def test_tcp_server_rejects_truncated_reverse_config(tmp_path, free_port):
 
     def run_server():
         try:
-            tcp.server(log, "127.0.0.1", free_port, 1.0, None)
+            tcp.server(log, "127.0.0.1", free_port, None)
         except Exception as e:
             errors.append(e)
 
@@ -330,7 +344,7 @@ def test_udp_server_rejects_invalid_reverse_config(tmp_path, free_port):
 
     def run_server():
         try:
-            udp.server(log, "127.0.0.1", free_port, 1.0)
+            udp.server(log, "127.0.0.1", free_port)
         except Exception as e:
             errors.append(e)
 
@@ -360,7 +374,7 @@ def test_udp_server_rejects_invalid_reverse_config(tmp_path, free_port):
 
 def test_reverse_config_rejects_truncated_name():
     packed = pack_reverse_config(
-        ReverseConfig(duration_seconds=0.0, traffic_pattern_name="abcd.json")
+        ReverseConfig(duration_ms=0, traffic_pattern_name="abcd.json")
     )
     try:
         unpack_reverse_config(packed[:-1])
@@ -379,7 +393,7 @@ def test_tcp_server_missing_reverse_trace(tmp_path, free_port):
     def run_server():
         try:
             tcp.server(
-                log, "127.0.0.1", free_port, 1.0, None, trace_dir=str(tmp_path)
+                log, "127.0.0.1", free_port, None, trace_dir=str(tmp_path)
             )
         except Exception as e:
             errors.append(e)
@@ -390,7 +404,7 @@ def test_tcp_server_missing_reverse_trace(tmp_path, free_port):
         _wait_for_start(log_path)
         packed = pack_reverse_config(
             ReverseConfig(
-                duration_seconds=0.0, traffic_pattern_name="missing.json"
+                duration_ms=0, traffic_pattern_name="missing.json"
             )
         )
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

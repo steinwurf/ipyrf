@@ -52,9 +52,9 @@ _UDP_CONTROL_SEQ_ACTIONS = {
     UDP_CONTROL_SEQ_ERROR: ACTION_ERROR,
 }
 
-# version, bandwidth_bps (0 = unlimited), duration_seconds, payload_len
+# version, bandwidth_bps (0 = unlimited), duration_ms, payload_len
 # (0 = default), loops, name_len. File name bytes follow the header.
-REVERSE_CONFIG = struct.Struct("!BQdIIB")
+REVERSE_CONFIG = struct.Struct("!BQIIIB")
 REVERSE_CONFIG_VERSION = 1
 REVERSE_CONFIG_SIZE = REVERSE_CONFIG.size
 DEFAULT_REVERSE_PAYLOAD_LEN = 1200
@@ -68,11 +68,11 @@ class ReverseConfig:
 
     When ``traffic_pattern_name`` is set, the server loads that file by
     name (not path) from its working directory or ``--trace-dir``.
-    ``duration_seconds`` is then ignored; ``bandwidth_bps`` remains an
+    ``duration_ms`` is then ignored; ``bandwidth_bps`` remains an
     optional egress-rate cap and ``loops`` replays the pattern.
     """
 
-    duration_seconds: float
+    duration_ms: int
     bandwidth_bps: Optional[float] = None
     payload_len: int = 0
     traffic_pattern_name: Optional[str] = None
@@ -147,6 +147,9 @@ def pack_reverse_config(config: ReverseConfig) -> bytes:
     if bw < 0:
         bw = 0
     payload_len = max(0, int(config.payload_len))
+    duration_ms = int(config.duration_ms)
+    if duration_ms < 0 or duration_ms > 0xFFFFFFFF:
+        raise ValueError(f"invalid reverse duration: {duration_ms}")
     loops = int(config.loops)
     if loops < 1:
         raise ValueError(f"invalid reverse loops: {loops}")
@@ -158,7 +161,7 @@ def pack_reverse_config(config: ReverseConfig) -> bytes:
         REVERSE_CONFIG.pack(
             REVERSE_CONFIG_VERSION,
             bw,
-            float(config.duration_seconds),
+            duration_ms,
             payload_len,
             loops,
             len(name_bytes),
@@ -177,13 +180,11 @@ def unpack_reverse_config(payload: bytes) -> ReverseConfig:
         raise ValueError(
             f"truncated reverse config ({len(payload)} < {REVERSE_CONFIG_SIZE})"
         )
-    version, bw, duration, payload_len, loops, name_len = (
+    version, bw, duration_ms, payload_len, loops, name_len = (
         REVERSE_CONFIG.unpack_from(payload)
     )
     if version != REVERSE_CONFIG_VERSION:
         raise ValueError(f"unsupported reverse config version: {version}")
-    if duration < 0:
-        raise ValueError(f"invalid reverse duration: {duration}")
     if loops < 1:
         raise ValueError(f"invalid reverse loops: {loops}")
     name_end = REVERSE_CONFIG_SIZE + name_len
@@ -199,7 +200,7 @@ def unpack_reverse_config(payload: bytes) -> ReverseConfig:
             raise ValueError("invalid reverse trace file name encoding") from e
         name = validate_trace_file_name(name)
     return ReverseConfig(
-        duration_seconds=float(duration),
+        duration_ms=int(duration_ms),
         bandwidth_bps=None if bw == 0 else float(bw),
         payload_len=int(payload_len),
         traffic_pattern_name=name,

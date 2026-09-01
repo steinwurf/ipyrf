@@ -8,6 +8,8 @@ Latest
 ------
 * Major: Changes has caused the header format to change, so older
   versions of ipyrf cannot operate with the new version of ipyrf.
+* Major: Removed ``--interval``. Periodic stats updates are always
+  every 1 second.
 * Minor: Added ``--bind-dev DEVICE`` for TCP/UDP clients to bind the
   transmit socket to a network interface.
 * Minor: Added ``--inactivity-timeout`` for UDP servers to configure how

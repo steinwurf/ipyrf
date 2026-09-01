@@ -24,10 +24,7 @@ class BasePacingController:
     UDP datagrams include their header in the send size, so overhead is 0.
     """
 
-    def __init__(
-        self, interval_seconds: float = 1.0, header_overhead: int = 0
-    ):
-        self.interval_seconds = interval_seconds
+    def __init__(self, header_overhead: int = 0):
         self.header_overhead = max(0, int(header_overhead))
 
     def is_pacing(self) -> bool:
@@ -78,12 +75,9 @@ class StaticPacingController(BasePacingController):
         self,
         bandwidth_bps: Optional[float],
         duration_seconds: float,
-        interval_seconds: float,
         header_overhead: int = 0,
     ):
-        super().__init__(
-            interval_seconds=interval_seconds, header_overhead=header_overhead
-        )
+        super().__init__(header_overhead=header_overhead)
         self.bandwidth_bps = bandwidth_bps
         self.duration_seconds = duration_seconds
         self.start_time = None
@@ -151,13 +145,10 @@ class TrafficPatternController(BasePacingController):
     def __init__(
         self,
         pattern: TrafficPattern,
-        interval_seconds: float,
         bandwidth_bps: Optional[float] = None,
         header_overhead: int = 0,
     ):
-        super().__init__(
-            interval_seconds=interval_seconds, header_overhead=header_overhead
-        )
+        super().__init__(header_overhead=header_overhead)
         self.pattern = pattern
         self.start_mono_ns: Optional[int] = None
         self.bytes_sent = 0
@@ -269,7 +260,6 @@ class TrafficPatternController(BasePacingController):
 
 def controller_from_reverse_config(
     config: ReverseConfig,
-    interval_seconds: float,
     *,
     header_overhead: int = 0,
     trace_dir: Optional[Union[str, Path]] = None,
@@ -283,8 +273,7 @@ def controller_from_reverse_config(
     if not config.traffic_pattern_name:
         return StaticPacingController(
             config.bandwidth_bps,
-            config.duration_seconds,
-            interval_seconds,
+            config.duration_ms / 1000.0,
             header_overhead=header_overhead,
         )
     path = resolve_trace_file(config.traffic_pattern_name, trace_dir)
@@ -293,7 +282,6 @@ def controller_from_reverse_config(
         pattern = LoopedTrafficPattern(pattern, config.loops)
     return TrafficPatternController(
         pattern,
-        interval_seconds,
         bandwidth_bps=config.bandwidth_bps,
         header_overhead=header_overhead,
     )
