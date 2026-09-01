@@ -3,6 +3,7 @@ import dummynet
 import logging
 import os
 import csv
+import json
 
 from ipyrf.packet_recorder import CSV_COLUMNS
 
@@ -18,6 +19,107 @@ def test_ipyrf_tcp_basic_loopback(ipyrf, free_port):
     client.run_tcp_client("127.0.0.1", free_port, duration=2)
 
     ipyrf.check((server, client), timeout=5)
+
+
+def test_ipyrf_tcp_reverse_loopback(ipyrf, free_port):
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_tcp_server("127.0.0.1", free_port)
+    client.run_tcp_client(
+        "127.0.0.1", free_port, duration=2, bandwidth="10M", reverse=True
+    )
+
+    ipyrf.check((server, client), timeout=8, criteria={"reverse": True})
+
+
+def test_ipyrf_udp_reverse_loopback(ipyrf, free_port):
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_udp_server("127.0.0.1", free_port)
+    client.run_udp_client(
+        "127.0.0.1", free_port, duration=2, bandwidth="10M", reverse=True
+    )
+
+    ipyrf.check(
+        (server, client),
+        timeout=8,
+        criteria={
+            "reverse": True,
+            "max_loss_pct": 5,
+        },
+    )
+
+
+def _write_reverse_trace(directory, name="rev.json"):
+    path = os.path.join(directory, name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "version": 1,
+                "type": "trace",
+                "events": [
+                    {"timestamp": 0.0, "nbytes": 4000},
+                    {"timestamp": 0.3, "nbytes": 4000},
+                    {"timestamp": 0.6, "nbytes": 4000},
+                ],
+            },
+            f,
+        )
+    return path
+
+
+def test_ipyrf_tcp_reverse_traffic_pattern(ipyrf, testdirectory, free_port):
+    trace_path = _write_reverse_trace(testdirectory.path())
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_tcp_server(
+        "127.0.0.1", free_port, trace_dir=testdirectory.path()
+    )
+    client.run_tcp_client(
+        "127.0.0.1",
+        free_port,
+        reverse=True,
+        traffic_pattern=trace_path,
+    )
+
+    ipyrf.check(
+        (server, client),
+        timeout=8,
+        criteria={
+            "reverse": True,
+            "allow_server_stop_reasons": {"traffic-pattern"},
+        },
+    )
+
+
+def test_ipyrf_udp_reverse_traffic_pattern(ipyrf, testdirectory, free_port):
+    trace_path = _write_reverse_trace(testdirectory.path())
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_udp_server(
+        "127.0.0.1", free_port, trace_dir=testdirectory.path()
+    )
+    client.run_udp_client(
+        "127.0.0.1",
+        free_port,
+        reverse=True,
+        traffic_pattern=trace_path,
+        bandwidth="50M",
+    )
+
+    ipyrf.check(
+        (server, client),
+        timeout=8,
+        criteria={
+            "reverse": True,
+            "allow_server_stop_reasons": {"traffic-pattern"},
+            "max_loss_pct": 5,
+        },
+    )
 
 
 def test_ipyrf_udp_basic_loopback(ipyrf, free_port):

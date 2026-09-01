@@ -109,12 +109,9 @@ class InteractiveController(BasePacingController):
     def __init__(
         self,
         initial_bps: float | None,
-        interval: float = 1.0,
         header_overhead: int = 0,
     ):
-        super().__init__(
-            interval_seconds=interval, header_overhead=header_overhead
-        )
+        super().__init__(header_overhead=header_overhead)
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.pacing = initial_bps is not None

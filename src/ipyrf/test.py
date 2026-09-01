@@ -83,7 +83,14 @@ class IPyrfClient:
             self.log_file_path
         ), f"log file {self.log_file_path} already exists"
 
-    def run_udp_server(self, address, port, packet_record=None, inactivity_timeout=None):
+    def run_udp_server(
+        self,
+        address,
+        port,
+        packet_record=None,
+        inactivity_timeout=None,
+        trace_dir=None,
+    ):
         """
         Run ipyrf as a UDP server.
 
@@ -92,34 +99,45 @@ class IPyrfClient:
             port: Port number to listen on.
             packet_record: Optional CSV path for UDP packet traces.
             inactivity_timeout: Optional seconds without packets before exit.
+            trace_dir: Optional directory of traffic-pattern files for
+                reverse tests.
         """
         args = ["udp", "server", address, "--port", str(port)]
         if packet_record is not None:
             args += ["--packet-record", str(packet_record)]
         if inactivity_timeout is not None:
             args += ["--inactivity-timeout", str(inactivity_timeout)]
+        if trace_dir is not None:
+            args += ["--trace-dir", str(trace_dir)]
         self.__run(args)
 
-    def run_tcp_server(self, address, port):
+    def run_tcp_server(self, address, port, trace_dir=None):
         """
         Run ipyrf as a TCP server.
 
         Args:
             address: IP address to bind to.
             port: Port number to listen on.
+            trace_dir: Optional directory of traffic-pattern files for
+                reverse tests.
         """
         args = ["tcp", "server", address, "--port", str(port)]
+        if trace_dir is not None:
+            args += ["--trace-dir", str(trace_dir)]
         self.__run(args)
 
     def run_udp_client(
         self,
         address,
         port,
-        duration,
-        bandwidth,
+        duration=None,
+        bandwidth=None,
         enable_latency=True,
         length=None,
         bind_dev=None,
+        reverse=False,
+        traffic_pattern=None,
+        loops=None,
     ):
         """
         Run ipyrf as a UDP client.
@@ -132,6 +150,10 @@ class IPyrfClient:
             enable_latency: Whether to enable latency measurements.
             length: Optional packet length.
             bind_dev: Optional network interface name to bind to.
+            reverse: If True, the server sends and this client receives.
+            traffic_pattern: Optional traffic-pattern JSON path. With
+                reverse, only the file name is sent to the server.
+            loops: Optional replay count for ``traffic_pattern``.
         """
         args = [
             "udp",
@@ -139,28 +161,37 @@ class IPyrfClient:
             address,
             "--port",
             str(port),
-            "--time",
-            str(duration),
-            "--bandwidth",
-            str(bandwidth),
         ]
+        if traffic_pattern is not None:
+            args += ["--traffic-pattern", str(traffic_pattern)]
+        else:
+            args += ["--time", str(10 if duration is None else duration)]
+        if bandwidth is not None:
+            args += ["--bandwidth", str(bandwidth)]
         if enable_latency:
             args += ["--enable-latency"]
         if length is not None:
             args += ["-l", str(length)]
         if bind_dev is not None:
             args += ["--bind-dev", str(bind_dev)]
+        if reverse:
+            args += ["--reverse"]
+        if loops is not None:
+            args += ["--loops", str(loops)]
         self.__run(args)
 
     def run_tcp_client(
         self,
         address,
         port,
-        duration,
+        duration=None,
         enable_latency=True,
         bandwidth=None,
         TCP_MAXSEG=None,
         bind_dev=None,
+        reverse=False,
+        traffic_pattern=None,
+        loops=None,
     ):
         """
         Run ipyrf as a TCP client.
@@ -174,6 +205,10 @@ class IPyrfClient:
                        10 Mbps).
             TCP_MAXSEG: Optional TCP maximum segment size.
             bind_dev: Optional network interface name to bind to.
+            reverse: If True, the server sends and this client receives.
+            traffic_pattern: Optional traffic-pattern JSON path. With
+                reverse, only the file name is sent to the server.
+            loops: Optional replay count for ``traffic_pattern``.
         """
         args = [
             "tcp",
@@ -181,9 +216,11 @@ class IPyrfClient:
             address,
             "--port",
             str(port),
-            "--time",
-            str(duration),
         ]
+        if traffic_pattern is not None:
+            args += ["--traffic-pattern", str(traffic_pattern)]
+        else:
+            args += ["--time", str(10 if duration is None else duration)]
         if enable_latency:
             args += ["--enable-latency"]
         if bandwidth is not None:
@@ -192,6 +229,10 @@ class IPyrfClient:
             args += ["--set-mss", str(TCP_MAXSEG)]
         if bind_dev is not None:
             args += ["--bind-dev", str(bind_dev)]
+        if reverse:
+            args += ["--reverse"]
+        if loops is not None:
+            args += ["--loops", str(loops)]
         self.__run(args)
 
     def __run(self, args):
@@ -279,6 +320,8 @@ class CheckCriteria:
     Tunable rules for deciding whether a run was successful.
 
     If mode is None, the checker infers it from summaries ("tcp"/"udp").
+    Set reverse=True when the client used --reverse (server sends,
+    client receives).
     """
 
     mode: Optional[str] = None
@@ -291,11 +334,20 @@ class CheckCriteria:
     max_lost_packets: Optional[int] = None
     min_packets: Optional[int] = None  # absolute minimum packets
     server_bps_ratio_of_target: Optional[float] = None
+    reverse: bool = False
     # Allowed stop reasons
-    allow_client_stop_reasons: Set[str] = field(default_factory=lambda: {"duration"})
-    allow_server_stop_reasons: Set[str] = field(
-        default_factory=lambda: {"end-of-test", "inactivity"}
-    )
+    allow_client_stop_reasons: Set[str] = field(default_factory=set)
+    allow_server_stop_reasons: Set[str] = field(default_factory=set)
+
+    def __post_init__(self):
+        if not self.allow_client_stop_reasons:
+            self.allow_client_stop_reasons = (
+                {"end-of-test", "inactivity"} if self.reverse else {"duration"}
+            )
+        if not self.allow_server_stop_reasons:
+            self.allow_server_stop_reasons = (
+                {"duration"} if self.reverse else {"end-of-test", "inactivity"}
+            )
 
     def evaluate(
         self, server: Dict[str, Any], client: Dict[str, Any]
@@ -322,17 +374,29 @@ class CheckCriteria:
             reasons.append("Could not determine mode (tcp/udp) from summaries.")
             return False, reasons
 
-        if client.get("direction") != "tx":
-            reasons.append(
-                f"Client direction is not 'tx': " f"{client.get('direction')}"
-            )
-            return False, reasons
+        if self.reverse:
+            if client.get("direction") != "rx":
+                reasons.append(
+                    f"Client direction is not 'rx': " f"{client.get('direction')}"
+                )
+                return False, reasons
+            if server.get("direction") != "tx":
+                reasons.append(
+                    f"Server direction is not 'tx': " f"{server.get('direction')}"
+                )
+                return False, reasons
+        else:
+            if client.get("direction") != "tx":
+                reasons.append(
+                    f"Client direction is not 'tx': " f"{client.get('direction')}"
+                )
+                return False, reasons
 
-        if server.get("direction") != "rx":
-            reasons.append(
-                f"Server direction is not 'rx': " f"{server.get('direction')}"
-            )
-            return False, reasons
+            if server.get("direction") != "rx":
+                reasons.append(
+                    f"Server direction is not 'rx': " f"{server.get('direction')}"
+                )
+                return False, reasons
 
         if server.get("type") != "summary" or client.get("type") != "summary":
             reasons.append("Missing summary object(s).")

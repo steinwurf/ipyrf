@@ -88,6 +88,7 @@ TCP server:
 .. code-block:: bash
 
    ipyrf tcp server 0.0.0.0 --port 12345
+   ipyrf tcp server 0.0.0.0 --port 12345 --trace-dir /var/traces
 
 TCP client:
 
@@ -98,6 +99,8 @@ TCP client:
    ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
    ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --loops 3
    ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --bind-dev eth0
+   ipyrf tcp client 127.0.0.1 --port 12345 --time 5 --bandwidth 50M --reverse
+   ipyrf tcp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --reverse
 
 UDP server:
 
@@ -105,6 +108,7 @@ UDP server:
 
    ipyrf udp server 0.0.0.0 --port 12345
    ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.csv
+   ipyrf udp server 0.0.0.0 --port 12345 --trace-dir /var/traces
 
 UDP client (with bandwidth cap and optional payload size):
 
@@ -115,6 +119,26 @@ UDP client (with bandwidth cap and optional payload size):
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --loops 3
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --bind-dev eth0
+   ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --reverse
+   ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --reverse
+
+Reverse mode
+------------
+
+Pass ``-R`` / ``--reverse`` on a TCP or UDP client so the server sends and
+the client receives. The client still initiates the connection; the first
+packet tells the server to transmit using the client's ``--bandwidth`` and
+``--time`` (and UDP ``-l``). This is the same role split as iperf3 ``-R``.
+
+With ``--traffic-pattern FILE``, the client sends only the file name (not
+the path) in that first packet so the reverse config always fits in a
+single packet. The server loads the file from its working directory, or
+from ``--trace-dir DIR`` when that option is given. ``--loops`` and
+``--bandwidth`` (egress-rate cap) are forwarded with the pattern. If the
+server cannot load the file, it replies with an error and the client
+fails with the same reason.
+
+``--reverse`` cannot be combined with ``--interactive``.
 
 Traffic patterns
 ----------------
@@ -170,7 +194,9 @@ pattern decides when bytes become available, and the pacer limits how quickly
 they may be transmitted. Pass ``--loops N`` to replay the pattern N times;
 each repetition starts when the previous one ends (at the pattern's
 duration). Event ids refer to the original file and repeat each loop.
-``--traffic-pattern`` cannot be combined with ``--interactive``.
+``--traffic-pattern`` cannot be combined with ``--interactive``. With
+``--reverse``, only the file name is sent to the server (see Reverse
+mode).
 
 Examples:
 
@@ -213,7 +239,7 @@ Generation parameters / source path are stored under ``metadata``.
 Interactive mode
 ----------------
 
-You can run clients in an interactive mode that lets you adjust the pacing live using your keyboard. Use ``--interactive`` and optionally ``--interval`` (seconds between stats updates). When interactive is enabled, the same client logic is used underneath with a dynamic pacing controller.
+You can run clients in an interactive mode that lets you adjust the pacing live using your keyboard. Use ``--interactive``. When interactive is enabled, the same client logic is used underneath with a dynamic pacing controller.
 
 Controls shown in the terminal:
 
@@ -232,8 +258,8 @@ Examples:
    # TCP interactive (unlimited unless you pass --bandwidth)
    ipyrf tcp client 127.0.0.1 --port 5201 --interactive
 
-   # TCP interactive with initial pacing and custom interval
-   ipyrf tcp client 127.0.0.1 --port 5201 --bandwidth 200M --set-mss 1400 --interactive --interval 0.5
+   # TCP interactive with initial pacing
+   ipyrf tcp client 127.0.0.1 --port 5201 --bandwidth 200M --set-mss 1400 --interactive
 
    # UDP interactive (requires initial --bandwidth)
    ipyrf udp client 127.0.0.1 --port 5201 --bandwidth 50M -l 1200 --interactive
@@ -263,13 +289,18 @@ TCP-specific options:
 - ``--bandwidth``: Target rate (e.g., ``50M``); pacing cap, also usable with
   ``--traffic-pattern``
 - ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
-  (``trace`` or ``piecewise_rate``)
+  (``trace`` or ``piecewise_rate``). With ``--reverse``, only the file name
+  is sent; the server must have the same file
+- ``--trace-dir DIR``: TCP server: directory of traffic-pattern files for
+  reverse tests (default: the server's working directory)
 - ``--loops N``: Replay ``--traffic-pattern`` N times (default 1)
 - ``--set-mss``: Set approximate MSS via ``TCP_MAXSEG``
 - ``--bind-dev DEVICE``: Bind the client socket to a network interface
   (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
+- ``--reverse`` / ``-R``: Server sends, client receives. Forwards
+  ``--bandwidth`` and ``--time``, or the name of ``--traffic-pattern``,
+  to the server
 - ``--interactive``: Enable interactive pacing controls
-- ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
 UDP-specific options:
 
@@ -279,16 +310,21 @@ UDP-specific options:
 - ``--bandwidth``: Target rate (e.g., ``50M``); pacing cap, also usable with
   ``--traffic-pattern``
 - ``--traffic-pattern FILE``: Drive sends from a JSON traffic-pattern file
-  (``trace`` or ``piecewise_rate``)
+  (``trace`` or ``piecewise_rate``). With ``--reverse``, only the file name
+  is sent; the server must have the same file
 - ``--loops N``: Replay ``--traffic-pattern`` N times (default 1)
 - ``-l/--length``: UDP payload length (default 1200)
 - ``--packet-record PATH``: UDP server: write received packet traces to a CSV file after the test
 - ``--inactivity-timeout SECONDS``: UDP server: exit after this many seconds
   without receiving packets (default 2.0)
+- ``--trace-dir DIR``: UDP server: directory of traffic-pattern files for
+  reverse tests (default: the server's working directory)
 - ``--bind-dev DEVICE``: Bind the client socket to a network interface
   (Linux ``SO_BINDTODEVICE``; typically requires ``CAP_NET_RAW`` or root)
+- ``--reverse`` / ``-R``: Server sends, client receives. Forwards
+  ``--bandwidth``, ``--time``, and ``-l``, or the name of
+  ``--traffic-pattern``, to the server
 - ``--interactive``: Enable interactive pacing controls
-- ``--interval``: Stats interval in seconds for interactive mode (default 1.0)
 
 Generate options:
 
