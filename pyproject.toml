@@ -21,10 +21,13 @@ classifiers = [
   "Topic :: System :: Networking",
   "Topic :: System :: Benchmark",
 ]
-dependencies = []
+dependencies = [
+  "plotly>=5.18",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pytest-cov>=4.0"]
+report-export = ["kaleido>=0.2"]
 
 [project.urls]
 Homepage = "https://github.com/steinwurf/ipyrf"
@@ -33,6 +36,7 @@ Issues = "https://github.com/steinwurf/ipyrf/issues"
 
 [project.scripts]
 ipyrf = "ipyrf.__main__:main"
+ipyrf-report = "ipyrf.report.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

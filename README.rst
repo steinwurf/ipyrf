@@ -10,6 +10,7 @@ Features
 - Optional bandwidth capping (TCP/UDP)
 - UDP packet loss estimation
 - Optional per-datagram UDP packet recording
+- Interactive HTML reports from packet recordings (``ipyrf-report``)
 - Linux TCP congestion control selection (if available)
 - Client ``--bind-dev`` to transmit via a specific network interface (Linux)
 
@@ -78,7 +79,7 @@ The project includes a comprehensive test suite using pytest:
 Usage
 -----
 
-The package installs a console script named ``ipyrf``.
+The package installs console scripts named ``ipyrf`` and ``ipyrf-report``.
 
 Quick examples
 ~~~~~~~~~~~~~~
@@ -273,6 +274,7 @@ Top-level structure:
 
    ipyrf [tcp|udp] [server|client] [OPTIONS]
    ipyrf generate video -o FILE [OPTIONS]
+   ipyrf-report RECORD [OPTIONS]
 
 Common options (both protocols, both roles):
 
@@ -337,6 +339,16 @@ Generate options:
 - ``--duration``: Synthetic length in seconds (default 10), or optional
   truncate when importing from ffprobe
 
+Report options (``ipyrf-report``):
+
+- ``RECORD``: Packet-record CSV from ``--packet-record``
+- ``-o/--output FILE``: HTML output path (default: ``RECORD`` with ``.html``)
+- ``--traffic-pattern FILE``: Traffic-pattern JSON used during the test
+- ``--json FILE``: Also write analysis results as JSON
+- ``--png [DIR]`` / ``--svg [DIR]``: Export static plots (requires kaleido)
+- ``--bin-ms MS``: Time-series bin size in milliseconds (default: auto)
+- ``--title TITLE``: Report title
+
 UDP packet recording
 --------------------
 
@@ -363,7 +375,36 @@ Quick local test (two terminals):
 
 When the client finishes, the server exits and ``packets.csv`` contains the
 trace. Use ``--enable-latency`` on the client if you also want latency
-stats in the server summary.
+stats in the server summary. Turn the CSV into an interactive HTML report
+with ``ipyrf-report`` (see below).
+
+Reports (ipyrf-report)
+----------------------
+
+``ipyrf-report`` reads a ``--packet-record`` CSV and writes one self-contained
+interactive HTML file (Plotly.js is embedded, so the file works offline).
+Pass the traffic-pattern JSON used during the test to label events, shade
+time-series by ``event_id`` / tags, and compare received bytes to the
+pattern.
+
+The report is laid out like a performance trace: KPI overview at the top,
+then throughput, latency (p50 / p95 / p99), loss, sequence / reordering,
+send vs receive spacing, and latency distribution / ECDF.
+
+.. code-block:: bash
+
+   ipyrf-report packets.csv
+   ipyrf-report packets.csv -o report.html --traffic-pattern trace.json
+   ipyrf-report packets.csv --json report.json --bin-ms 10
+   ipyrf-report packets.csv --png --svg
+
+``-o`` defaults to the record path with a ``.html`` suffix. ``--png`` and
+``--svg`` write individual plots next to the HTML (or to a directory you
+pass); they require the optional ``kaleido`` extra:
+
+.. code-block:: bash
+
+   python3 -m pip install 'ipyrf[report-export]'
 
 JSON logging
 ------------

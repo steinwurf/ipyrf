@@ -6,7 +6,11 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Minor: Added ``ipyrf-report`` to generate a self-contained interactive
+  HTML report from a ``--packet-record`` CSV. Optional
+  ``--traffic-pattern`` labels and shades events; ``--json`` writes
+  analysis results; ``--png`` / ``--svg`` export static plots when
+  kaleido is installed.
 
 2.0.0
 -----
