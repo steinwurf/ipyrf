@@ -480,7 +480,7 @@ def _main():
                     args.set_mss,
                     reverse_config=ReverseConfig(
                         duration_ms=(
-                            0 if reverse_trace_name else int(args.time) * 1000
+                            0 if not args.time else int(args.time) * 1000
                         ),
                         bandwidth_bps=args.bandwidth,
                         traffic_pattern_name=reverse_trace_name,
