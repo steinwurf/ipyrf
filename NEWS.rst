@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+2.0.0
+-----
 * Major: Changes has caused the header format to change, so older
   versions of ipyrf cannot operate with the new version of ipyrf.
 * Major: Removed ``--interval``. Periodic stats updates are always
