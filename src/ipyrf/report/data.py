@@ -169,6 +169,7 @@ class Summary:
     stop_reason: Optional[str] = None
     congestion_control: Optional[str] = None
     show_loss: bool = True
+    clock_offset_ms: float = 0.0
     warnings: List[str] = field(default_factory=list)
 
 

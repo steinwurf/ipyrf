@@ -369,6 +369,9 @@ Report options (``ipyrf-report``):
 - ``--png [DIR]`` / ``--svg [DIR]``: Export static plots (requires kaleido)
 - ``--bin-ms MS``: Time-series bin size in milliseconds (default: auto)
 - ``--title TITLE``: Report title
+- ``--clock-offset MS``: Add this many milliseconds to one-way latency
+  (value from ``ipyrf offset`` run on the receiving host against the
+  sender). The HTML report can also change this after generation
 
 Receive recording
 -----------------
@@ -420,7 +423,9 @@ Reports (ipyrf-report)
 comment) and writes one self-contained interactive HTML file (Plotly.js is
 embedded, so the file works offline). Pass ``--traffic-pattern`` to override
 a pattern embedded in the record metadata; otherwise the report uses the
-embedded pattern when present.
+embedded pattern when present. Pass ``--clock-offset MS`` to add that many
+milliseconds to one-way latency (the HTML header also has a clock-offset
+field you can edit later without regenerating).
 
 The report is laid out like a performance trace: KPI overview at the top,
 then throughput, latency (p50 / p95 / p99), loss and sequence / reordering
@@ -433,6 +438,7 @@ distribution / ECDF.
    ipyrf-report records.csv -o report.html --traffic-pattern trace.json
    ipyrf-report records.csv --json report.json --bin-ms 10
    ipyrf-report records.csv --png --svg
+   ipyrf-report records.csv --clock-offset 1.23
 
 ``-o`` defaults to the record path with a ``.html`` suffix. ``--png`` and
 ``--svg`` write individual plots next to the HTML (or to a directory you
@@ -456,8 +462,11 @@ remote Python startup are not counted as a sample.
 
 This is useful when comparing ``transmitted_ns`` and ``received_ns`` in a
 ``--record`` CSV from a two-host test. One-way latency is
-``received_ns - transmitted_ns``. If this host sent, subtract the
-offset; if the remote sent, add it.
+``received_ns - transmitted_ns``. If you run ``ipyrf offset`` on the
+receiving host against the sender, pass that value to
+``ipyrf-report --clock-offset`` (or type it into the HTML report). That
+adds the offset so latency is in the receiver's time base. If this host
+sent and the remote recorded, negate the printed offset first.
 
 The remote host needs ``python3`` (or pass ``--python``). SSH uses your
 normal configuration and keys.

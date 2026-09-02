@@ -79,6 +79,18 @@ def _main() -> None:
         "--title",
         help="Report title (default: derived from the record / pattern name)",
     )
+    parser.add_argument(
+        "--clock-offset",
+        type=_parse_clock_offset,
+        default=0.0,
+        metavar="MS",
+        help=(
+            "Add this many milliseconds to one-way latency. Use the value "
+            "printed by 'ipyrf offset' when run on the receiving host "
+            "against the sender. The HTML report can also change this "
+            "after generation"
+        ),
+    )
     args = parser.parse_args()
 
     record = Path(args.record)
@@ -95,6 +107,7 @@ def _main() -> None:
         svg_dir=svg_dir,
         bin_ms=args.bin_ms,
         title=args.title,
+        clock_offset_ms=args.clock_offset,
     )
     print(f"Wrote {output}")
     if args.json_path:
@@ -103,6 +116,13 @@ def _main() -> None:
         print(f"Wrote PNG plots in {png_dir}")
     if svg_dir is not None:
         print(f"Wrote SVG plots in {svg_dir}")
+
+
+def _parse_clock_offset(value: str) -> float:
+    try:
+        return float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number: {value!r}") from None
 
 
 def _parse_bin_ms(value: str) -> float:

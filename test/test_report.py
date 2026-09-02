@@ -200,6 +200,28 @@ def test_analyze_loss_reorder_latency(tmp_path):
     assert any(b.lost_packets for b in data.bins)
 
 
+def test_analyze_clock_offset_shifts_latency(tmp_path):
+    path = _write_csv(tmp_path / "packets.csv", _fixture_rows())
+    base = analyze(load_record(path), bin_ns=1_000_000)
+    shifted = analyze(
+        load_record(path), bin_ns=1_000_000, clock_offset_ms=3.5
+    )
+    assert shifted.summary.clock_offset_ms == 3.5
+    assert shifted.summary.latency_p50_ms == pytest.approx(
+        base.summary.latency_p50_ms + 3.5
+    )
+    assert shifted.summary.latency_p99_ms == pytest.approx(
+        base.summary.latency_p99_ms + 3.5
+    )
+    for base_bin, shifted_bin in zip(base.bins, shifted.bins):
+        if base_bin.latency_p50_ms is None:
+            assert shifted_bin.latency_p50_ms is None
+            continue
+        assert shifted_bin.latency_p50_ms == pytest.approx(
+            base_bin.latency_p50_ms + 3.5
+        )
+
+
 def test_analyze_event_stats_with_pattern(tmp_path):
     path = _write_csv(tmp_path / "packets.csv", _fixture_rows())
     pattern_path = tmp_path / "trace.json"
@@ -329,11 +351,18 @@ def test_generate_html_and_json(tmp_path):
         traffic_pattern_path=pattern_path,
         json_path=json_path,
         title="Fixture",
+        clock_offset_ms=1.25,
     )
     html = html_path.read_text(encoding="utf-8")
     assert "Fixture" in html
     assert "Throughput" in html
     assert "Latency" in html
+    assert 'id="clock-offset-ms"' in html
+    assert 'data-baked="1.25"' in html
+    assert "data-latency-ms=" in html
+    assert "ipyrf offset" in html
+    assert "<!--OFFSET-SCRIPT-->" not in html
+    assert "clock-offset-ms" in html
     assert "Per-event stats" not in html
     assert "Traffic events" in html
     assert "Empirical Cumulative Distribution Function" in html
@@ -346,7 +375,9 @@ def test_generate_html_and_json(tmp_path):
     assert parsed["version"] == 1
     assert parsed["summary"]["packets"] == 19
     assert parsed["summary"]["lost_packets"] == 1
+    assert parsed["summary"]["clock_offset_ms"] == pytest.approx(1.25)
     assert data.summary.packets == 19
+    assert data.summary.clock_offset_ms == pytest.approx(1.25)
 
 
 def test_cli_help():
@@ -358,6 +389,7 @@ def test_cli_help():
     )
     assert "RECORD" in result.stdout
     assert "--traffic-pattern" in result.stdout
+    assert "--clock-offset" in result.stdout
     assert "--record" in result.stdout or "Record CSV" in result.stdout
 
 

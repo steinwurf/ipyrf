@@ -34,8 +34,14 @@ def analyze(
     packets: PacketTrace,
     pattern: Optional[PatternInfo] = None,
     bin_ns: Optional[int] = None,
+    clock_offset_ms: float = 0.0,
 ) -> ReportData:
-    """Compute report series and summary statistics from a packet trace."""
+    """Compute report series and summary statistics from a packet trace.
+
+    ``clock_offset_ms`` is added to every one-way latency (received minus
+    transmitted). Pass the ``ipyrf offset`` value measured from the
+    receiving host to the sending host.
+    """
     n = len(packets)
     sequence = packets.sequence
     size_bytes = packets.size_bytes
@@ -71,6 +77,7 @@ def analyze(
     latencies_ms: List[float] = []
     negative_latency = 0
     total_bytes = 0
+    offset_ms = float(clock_offset_ms or 0.0)
 
     def bin_index(ts_ns: int) -> int:
         idx = (ts_ns - t0) // bin_ns
@@ -85,7 +92,7 @@ def analyze(
         idx = bin_index(received_ns[i])
         bin_bytes[idx] += size_bytes[i]
         bin_packets[idx] += 1
-        latency_ms = (received_ns[i] - transmitted_ns[i]) / 1e6
+        latency_ms = (received_ns[i] - transmitted_ns[i]) / 1e6 + offset_ms
         latencies_ms.append(latency_ms)
         bin_latencies[idx].append(latency_ms)
         if latency_ms < 0:
@@ -297,6 +304,7 @@ def analyze(
         stop_reason=_optional_str(meta.get("stop_reason")),
         congestion_control=_optional_str(meta.get("congestion_control")),
         show_loss=show_loss,
+        clock_offset_ms=offset_ms,
         warnings=warnings,
     )
 

@@ -20,6 +20,7 @@ def generate_report(
     svg_dir: Optional[Union[str, Path]] = None,
     bin_ms: Optional[float] = None,
     title: Optional[str] = None,
+    clock_offset_ms: float = 0.0,
 ) -> ReportData:
     """Load a ``--record`` CSV, analyze it, and write HTML (and optional exports)."""
     packets = load_record(record_path)
@@ -30,7 +31,12 @@ def generate_report(
     bin_ns = None
     if bin_ms is not None:
         bin_ns = max(1, int(float(bin_ms) * 1e6))
-    data = analyze(packets, pattern, bin_ns=bin_ns)
+    data = analyze(
+        packets,
+        pattern,
+        bin_ns=bin_ns,
+        clock_offset_ms=clock_offset_ms,
+    )
     write_html(data, output_path, title=title)
     if json_path is not None:
         Path(json_path).write_text(data.to_json(), encoding="utf-8")

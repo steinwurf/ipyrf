@@ -9,6 +9,9 @@ Latest
 * Minor: Added ``ipyrf offset HOST`` to measure clock offset between
   this host and a remote machine over SSH. Useful for interpreting
   one-way latency in ``--record`` CSVs.
+* Minor: ``ipyrf-report --clock-offset MS`` adds a clock offset to
+  one-way latency. The HTML report also has a clock-offset field that
+  can be changed after the file is generated.
 * Patch: ``ipyrf offset`` discards an untimed warmup round trip so SSH
   handshake and host-key prompts are not counted as the first sample.
 * Patch: ``ipyrf-report`` HTML generation is much faster when a traffic
