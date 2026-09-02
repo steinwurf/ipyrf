@@ -2,19 +2,24 @@ import csv
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from ipyrf.packet_recorder import CSV_COLUMNS
+from ipyrf.recorder import CSV_COLUMNS, Recorder
 from ipyrf.report import (
     ReportError,
     analyze,
     generate_report,
-    load_packet_record,
+    load_record,
     load_pattern_info,
 )
+from ipyrf.report.data import EventSpan
 from ipyrf.report.export import write_images
+from ipyrf.report.html import _default_title, _intro_html, _kpi_cards
+from ipyrf.report.loader import pattern_from_record_metadata
+from ipyrf.report.plots import _merged_shading_spans, _overview_figure
 
 
 def _write_csv(path: Path, rows):
@@ -45,7 +50,7 @@ def _fixture_rows():
 
 def test_loader_reads_csv(tmp_path):
     path = _write_csv(tmp_path / "packets.csv", _fixture_rows())
-    packets = load_packet_record(path)
+    packets = load_record(path)
     assert len(packets) == 19
     assert packets.sequence[0] == 1
     assert packets.event_id[0] == 1
@@ -58,7 +63,7 @@ def test_loader_event_id_optional(tmp_path):
         writer = csv.writer(f)
         writer.writerow(("sequence", "size_bytes", "transmitted_ns", "received_ns"))
         writer.writerow((1, 64, 10, 20))
-    packets = load_packet_record(path)
+    packets = load_record(path)
     assert packets.event_id == [0]
 
 
@@ -66,24 +71,107 @@ def test_loader_missing_column(tmp_path):
     path = tmp_path / "bad.csv"
     path.write_text("sequence,size_bytes,transmitted_ns\n1,10,1\n")
     with pytest.raises(ReportError, match="missing required column"):
-        load_packet_record(path)
+        load_record(path)
 
 
 def test_loader_bad_integer(tmp_path):
     path = _write_csv(tmp_path / "bad.csv", [("x", 10, 1, 2, 0)])
     with pytest.raises(ReportError, match="invalid integer"):
-        load_packet_record(path)
+        load_record(path)
 
 
 def test_loader_empty(tmp_path):
     path = _write_csv(tmp_path / "empty.csv", [])
-    with pytest.raises(ReportError, match="no packet records"):
-        load_packet_record(path)
+    with pytest.raises(ReportError, match="no records"):
+        load_record(path)
 
 
 def test_loader_missing_file(tmp_path):
     with pytest.raises(ReportError, match="cannot read"):
-        load_packet_record(tmp_path / "missing.csv")
+        load_record(tmp_path / "missing.csv")
+
+
+def test_loader_reads_metadata_comment(tmp_path):
+    path = tmp_path / "records.csv"
+    with Recorder(
+        path,
+        metadata={"protocol": "tcp", "sequence": "receive_order"},
+        records_per_chunk=2,
+        num_chunks=2,
+    ) as recorder:
+        recorder.add(100, 150, 64)
+    packets = load_record(path)
+    assert packets.metadata["protocol"] == "tcp"
+    assert packets.metadata["sequence"] == "receive_order"
+    assert packets.metadata["record_count"] == 1
+    assert len(packets) == 1
+    assert packets.metadata.get("format") == "ipyrf-record"
+
+
+def test_analyze_tcp_hides_loss(tmp_path):
+    path = tmp_path / "records.csv"
+    with Recorder(
+        path,
+        metadata={
+            "protocol": "tcp",
+            "sequence": "receive_order",
+            "record_unit": "tcp_record",
+            "sender": "127.0.0.1:1",
+            "receiver": "127.0.0.1:5201",
+            "bandwidth_bps": 5_000_000,
+        },
+        records_per_chunk=2,
+        num_chunks=2,
+    ) as recorder:
+        recorder.add(100, 150, 64, seq=1)
+        recorder.add(200, 250, 64, seq=2)
+    data = analyze(load_record(path), bin_ns=1_000_000)
+    assert data.summary.show_loss is False
+    assert data.summary.protocol == "tcp"
+    assert data.summary.lost_packets == 0
+    assert data.summary.reordered_packets == 0
+    assert data.loss_runs == []
+    assert "Loss" not in _kpi_cards(data.summary)
+    assert "Records" in _kpi_cards(data.summary)
+    assert "TCP" in _default_title(data)
+    assert "framed TCP" in _intro_html(data.summary)
+    assert data.summary.bandwidth_bps == 5_000_000
+
+
+def test_embedded_pattern_from_metadata(tmp_path):
+    pattern = {
+        "version": 1,
+        "type": "trace",
+        "metadata": {"name": "embedded"},
+        "events": [
+            {"timestamp": 0.0, "nbytes": 64, "tags": ["I"]},
+            {"timestamp": 0.1, "nbytes": 64, "tags": ["P"]},
+        ],
+    }
+    path = tmp_path / "records.csv"
+    with Recorder(
+        path,
+        metadata={
+            "protocol": "udp",
+            "sequence": "sender",
+            "traffic_pattern": pattern,
+            "traffic_pattern_name": "trace.json",
+        },
+        records_per_chunk=2,
+        num_chunks=2,
+    ) as recorder:
+        recorder.add(0, 1_000_000, 64, 1, seq=1)
+        recorder.add(100_000_000, 101_000_000, 64, 2, seq=2)
+    packets = load_record(path)
+    info = pattern_from_record_metadata(packets.metadata)
+    assert info is not None
+    assert info.pattern_type == "trace"
+    data = analyze(packets, info, bin_ns=1_000_000)
+    assert data.summary.pattern_name == "embedded"
+    assert data.summary.show_loss is True
+    by_id = {e.event_id: e for e in data.events}
+    assert by_id[1].tags == ["I"]
+    assert by_id[2].tags == ["P"]
 
 
 def test_invalid_traffic_pattern(tmp_path):
@@ -95,7 +183,7 @@ def test_invalid_traffic_pattern(tmp_path):
 
 def test_analyze_loss_reorder_latency(tmp_path):
     path = _write_csv(tmp_path / "packets.csv", _fixture_rows())
-    data = analyze(load_packet_record(path), bin_ns=1_000_000)
+    data = analyze(load_record(path), bin_ns=1_000_000)
     s = data.summary
     assert s.packets == 19
     assert s.bytes == 19_000
@@ -129,7 +217,7 @@ def test_analyze_event_stats_with_pattern(tmp_path):
         )
     )
     pattern = load_pattern_info(pattern_path)
-    data = analyze(load_packet_record(path), pattern, bin_ns=1_000_000)
+    data = analyze(load_record(path), pattern, bin_ns=1_000_000)
     assert data.summary.pattern_name == "fixture"
     by_id = {e.event_id: e for e in data.events}
     assert by_id[1].tags == ["A"]
@@ -166,6 +254,57 @@ def test_load_piecewise_rate_pattern(tmp_path):
     assert info.events[1].nbytes == 0
 
 
+def test_merged_shading_spans_joins_same_tags_across_gaps():
+    spans = [
+        EventSpan(1, 0.00, 0.01, ["I"]),
+        EventSpan(2, 0.03, 0.04, ["B"]),
+        EventSpan(3, 0.06, 0.07, ["B"]),
+        EventSpan(4, 0.10, 0.11, ["P"]),
+    ]
+    merged = _merged_shading_spans(spans)
+    assert [(round(s, 2), round(e, 2), key) for s, e, key, _color in merged] == [
+        (0.00, 0.01, "I"),
+        (0.03, 0.07, "B"),
+        (0.10, 0.11, "P"),
+    ]
+
+
+def test_overview_event_shading_is_fast_with_many_events(tmp_path):
+    n = 180
+    tags = ("I", "B", "B", "P")
+    rows = []
+    events = []
+    for i in range(n):
+        tx = 1_000_000_000 + i * 1_000_000
+        rx = tx + 2_000_000
+        rows.append((i + 1, 100, tx, rx, i + 1))
+        events.append(
+            {"timestamp": i * 0.01, "nbytes": 100, "tags": [tags[i % 4]]}
+        )
+    record = _write_csv(tmp_path / "packets.csv", rows)
+    pattern_path = tmp_path / "trace.json"
+    pattern_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "type": "trace",
+                "metadata": {"name": "many-events"},
+                "events": events,
+            }
+        )
+    )
+    data = analyze(
+        load_record(record),
+        load_pattern_info(pattern_path),
+        bin_ns=1_000_000,
+    )
+    started = time.perf_counter()
+    fig = _overview_figure(data)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 5.0
+    assert len(fig.layout.shapes) > 0
+
+
 def test_generate_html_and_json(tmp_path):
     record = _write_csv(tmp_path / "packets.csv", _fixture_rows())
     pattern_path = tmp_path / "trace.json"
@@ -195,8 +334,8 @@ def test_generate_html_and_json(tmp_path):
     assert "Fixture" in html
     assert "Throughput" in html
     assert "Latency" in html
-    assert "Per-event stats" in html
-    assert ">A<" in html
+    assert "Per-event stats" not in html
+    assert "Traffic events" in html
     assert "Empirical Cumulative Distribution Function" in html
     assert "About this report" in html
     assert "Glossary" in html
@@ -219,7 +358,7 @@ def test_cli_help():
     )
     assert "RECORD" in result.stdout
     assert "--traffic-pattern" in result.stdout
-    assert "--packet-record" in result.stdout or "packet-record" in result.stdout
+    assert "--record" in result.stdout or "Record CSV" in result.stdout
 
 
 def test_cli_writes_html(tmp_path):
@@ -263,7 +402,7 @@ def test_cli_missing_record_exits_2(tmp_path):
 
 def test_png_without_kaleido_errors(tmp_path, monkeypatch):
     record = _write_csv(tmp_path / "packets.csv", _fixture_rows())
-    data = analyze(load_packet_record(record), bin_ns=1_000_000)
+    data = analyze(load_record(record), bin_ns=1_000_000)
 
     import builtins
 

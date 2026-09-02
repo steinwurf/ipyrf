@@ -17,8 +17,8 @@ TIPS = {
     "throughput": (
         "Average receive rate for the whole test: total bits divided by duration."
     ),
-    "bytes": "Total UDP datagram size recorded (payload including ipyrf headers).",
-    "packets": "Number of datagrams written to the packet-record CSV.",
+    "bytes": "Total size recorded (UDP datagram or TCP framed record, including ipyrf headers).",
+    "packets": "Number of records written to the --record CSV.",
     "loss": (
         "Sequence numbers between the first and last received packet that never "
         "arrived. Loss % is lost / (last_seq - first_seq + 1)."
@@ -51,11 +51,6 @@ TIPS = {
     "event_id": (
         "1-based index of the traffic-pattern event or piecewise-rate period "
         "that produced this packet. 0 means no pattern was used."
-    ),
-    "tags": "Optional labels from the traffic-pattern JSON (for example I, P, or B frames).",
-    "expected": (
-        "Bytes this event should have produced according to the traffic-pattern "
-        "file (one loop). Compare with the received bytes column."
     ),
     "bin": (
         "Packets are summed into time buckets of this width to build the "
@@ -122,7 +117,11 @@ def write_html(
             config=PLOT_CONFIG,
         )
         include_js = False
-        extra = _overview_legend() if name == "overview" else ""
+        extra = (
+            _overview_legend(show_loss=data.summary.show_loss)
+            if name == "overview"
+            else ""
+        )
         sections.append(
             f'<section class="plot" id="{html.escape(name)}">'
             f"<h2>{html.escape(heading)}</h2>"
@@ -134,11 +133,11 @@ def write_html(
     document = _DOCUMENT.format(
         title=html.escape(report_title),
         subtitle=_subtitle(data.summary),
+        run_meta=_run_meta_html(data.summary),
         kpis=_kpi_cards(data.summary),
-        intro=_intro_html(),
+        intro=_intro_html(data.summary),
         warnings=_warnings(data.summary.warnings),
-        events=_events_table(data.events),
-        glossary=_glossary_html(),
+        glossary=_glossary_html(data.summary),
         footer=_footer(data.summary),
     )
     document = document.replace("<!--PLOTS-->", "\n".join(sections), 1)
@@ -148,10 +147,15 @@ def write_html(
 
 
 def _default_title(data: ReportData) -> str:
+    proto = (data.summary.protocol or "").upper()
     name = data.summary.pattern_name
+    if proto and name:
+        return f"ipyrf {proto} — {name}"
+    if proto:
+        return f"ipyrf {proto} report"
     if name:
         return f"ipyrf report — {name}"
-    source = Path(data.summary.source).name if data.summary.source else "packet record"
+    source = Path(data.summary.source).name if data.summary.source else "record"
     return f"ipyrf report — {source}"
 
 
@@ -164,7 +168,15 @@ def _figure_heading(name: str) -> str:
 
 
 def _subtitle(summary: Summary) -> str:
-    parts = [html.escape(Path(summary.source).name or "packet record")]
+    parts = []
+    if summary.protocol:
+        label = summary.protocol.upper()
+        if summary.reverse:
+            label += " reverse"
+        parts.append(html.escape(label))
+    source = Path(summary.source).name if summary.source else ""
+    if source:
+        parts.append(html.escape(source))
     if summary.pattern_source:
         label = summary.pattern_type or "traffic pattern"
         name = Path(summary.pattern_source).name
@@ -173,22 +185,80 @@ def _subtitle(summary: Summary) -> str:
     return " · ".join(parts)
 
 
+def _run_meta_html(summary: Summary) -> str:
+    items = []
+    if summary.sender or summary.receiver:
+        path = " → ".join(
+            p for p in (summary.sender, summary.receiver) if p
+        )
+        items.append(("Path", path, None))
+    if summary.bandwidth_bps is not None:
+        items.append(("Target", human_bps(summary.bandwidth_bps), None))
+    if summary.configured_duration_s is not None:
+        items.append(
+            ("Configured duration", f"{summary.configured_duration_s:g} s", None)
+        )
+    if summary.payload_len is not None:
+        items.append(("Payload", f"{summary.payload_len} bytes", None))
+    if summary.congestion_control:
+        items.append(("Congestion control", summary.congestion_control, None))
+    if summary.sequence_kind:
+        tip = (
+            "UDP uses the sender sequence number so missing values are loss. "
+            "TCP assigns sequence in receive order; loss is not visible."
+            if summary.sequence_kind == "sender"
+            else "Sequence is 1, 2, 3… in the order records were fully received."
+        )
+        items.append(("Sequence", summary.sequence_kind.replace("_", " "), tip))
+    if summary.stop_reason:
+        items.append(("Stop", summary.stop_reason, None))
+    if not items:
+        return ""
+    chips = []
+    for label, value, tip in items:
+        body = (
+            f'<span class="run-label">{html.escape(label)}</span>'
+            f'<span class="run-value">{html.escape(value)}</span>'
+        )
+        if tip:
+            chips.append(
+                f'<span class="run-chip tip" tabindex="0" data-tip="{_attr(tip)}">'
+                f"{body}</span>"
+            )
+        else:
+            chips.append(f'<span class="run-chip">{body}</span>')
+    return f'<div class="run-meta">{"".join(chips)}</div>'
+
+
 def _kpi_cards(summary: Summary) -> str:
+    unit = {
+        "datagram": "Datagrams",
+        "tcp_record": "Records",
+    }.get(summary.record_unit or "", "Packets")
     cards = [
         ("Duration", f"{summary.duration_s:.3f} s", TIPS["duration"]),
         ("Throughput", human_bps(summary.bits_per_second), TIPS["throughput"]),
         ("Bytes", human_readable_bytes(summary.bytes), TIPS["bytes"]),
-        ("Packets", f"{summary.packets:,}", TIPS["packets"]),
-        (
-            "Loss",
-            f"{summary.lost_packets:,} ({summary.lost_percent:.2f}%)",
-            TIPS["loss"],
-        ),
-        ("Reordered", f"{summary.reordered_packets:,}", TIPS["reordered"]),
-        ("Latency p50", _fmt_ms(summary.latency_p50_ms), TIPS["p50"]),
-        ("Latency p95", _fmt_ms(summary.latency_p95_ms), TIPS["p95"]),
-        ("Latency p99", _fmt_ms(summary.latency_p99_ms), TIPS["p99"]),
+        (unit, f"{summary.packets:,}", TIPS["packets"]),
     ]
+    if summary.show_loss:
+        cards.extend(
+            [
+                (
+                    "Loss",
+                    f"{summary.lost_packets:,} ({summary.lost_percent:.2f}%)",
+                    TIPS["loss"],
+                ),
+                ("Reordered", f"{summary.reordered_packets:,}", TIPS["reordered"]),
+            ]
+        )
+    cards.extend(
+        [
+            ("Latency p50", _fmt_ms(summary.latency_p50_ms), TIPS["p50"]),
+            ("Latency p95", _fmt_ms(summary.latency_p95_ms), TIPS["p95"]),
+            ("Latency p99", _fmt_ms(summary.latency_p99_ms), TIPS["p99"]),
+        ]
+    )
     items = []
     for label, value, tip in cards:
         items.append(
@@ -200,14 +270,29 @@ def _kpi_cards(summary: Summary) -> str:
     return "".join(items)
 
 
-def _intro_html() -> str:
+def _intro_html(summary: Summary) -> str:
+    if summary.protocol == "tcp":
+        unit = (
+            "framed TCP records. Sequence is receive order; TCP hides "
+            "loss and reordering, so those charts are omitted"
+        )
+    elif summary.protocol == "udp":
+        unit = (
+            "UDP datagrams. Sequence is the sender number, so gaps are "
+            "loss and late arrivals are reordering"
+        )
+    else:
+        unit = (
+            "the --record CSV. UDP rows are datagrams (sender sequence); "
+            "TCP rows are framed records (receive order)"
+        )
     return (
         '<section class="intro">'
         "<h2>About this report</h2>"
-        "<p>Each chart is built from the UDP packet-record CSV: sequence "
+        "<p>Each chart is built from received send units: sequence "
         "number, size, send and receive timestamps, and optional "
-        f"{_term('event_id', TIPS['event_id'])}. One-way latency is "
-        "receive time minus send time.</p>"
+        f"{_term('event_id', TIPS['event_id'])}. This file is {unit}. "
+        "One-way latency is receive time minus send time.</p>"
         "<p>Hover a highlighted term or a KPI tile for a definition. "
         "Pan and zoom the plots; double-click to reset. A fuller "
         '<a href="#glossary">glossary</a> is at the bottom.</p>'
@@ -222,9 +307,16 @@ def _blurb_html(name: str) -> str:
     return f'<p class="blurb">{_expand_terms(text)}</p>'
 
 
-def _overview_legend() -> str:
+def _overview_legend(show_loss: bool = True) -> str:
+    rows = list(OVERVIEW_ROWS)
+    if not show_loss:
+        rows = [
+            row
+            for row in rows
+            if row[0] not in ("Packet loss", "Sequence / reordering")
+        ]
     items = []
-    for title, detail in OVERVIEW_ROWS:
+    for title, detail in rows:
         items.append(
             "<li><strong>"
             f"{html.escape(title)}.</strong> {_expand_terms(detail)}</li>"
@@ -239,69 +331,7 @@ def _warnings(warnings: list) -> str:
     return f'<section class="warnings"><h2>Warnings</h2><ul>{items}</ul></section>'
 
 
-def _events_table(events: list) -> str:
-    if not events:
-        return ""
-    max_rows = 200
-    rows = events[:max_rows]
-    body = []
-    for event in rows:
-        tags = ", ".join(event.tags) if event.tags else "—"
-        expected = (
-            human_readable_bytes(event.expected_bytes)
-            if event.expected_bytes is not None
-            else "—"
-        )
-        body.append(
-            "<tr>"
-            f"<td>{event.event_id}</td>"
-            f"<td>{html.escape(tags)}</td>"
-            f"<td>{event.packets:,}</td>"
-            f"<td>{human_readable_bytes(event.bytes)}</td>"
-            f"<td>{html.escape(expected)}</td>"
-            f"<td>{event.lost_packets:,}</td>"
-            f"<td>{_fmt_ms(event.latency_p50_ms)}</td>"
-            f"<td>{_fmt_ms(event.latency_p95_ms)}</td>"
-            "</tr>"
-        )
-    note = ""
-    if len(events) > max_rows:
-        note = (
-            f'<p class="note">Showing {max_rows} of {len(events)} events.</p>'
-        )
-    blurb = (
-        '<p class="blurb">One row per '
-        f"{_term('event_id', TIPS['event_id'])} seen in the recording. "
-        "Lost packets are attributed to an event only when both neighbouring "
-        "sequence numbers belong to it.</p>"
-    )
-    headers = "".join(
-        _th(label, tip)
-        for label, tip in (
-            ("event_id", TIPS["event_id"]),
-            ("tags", TIPS["tags"]),
-            ("packets", TIPS["packets"]),
-            ("bytes", TIPS["bytes"]),
-            ("expected", TIPS["expected"]),
-            ("lost", TIPS["loss"]),
-            ("p50", TIPS["p50"]),
-            ("p95", TIPS["p95"]),
-        )
-    )
-    return (
-        '<section class="events"><h2>Per-event stats</h2>'
-        + blurb
-        + "<table><thead><tr>"
-        + headers
-        + "</tr></thead><tbody>"
-        + "".join(body)
-        + "</tbody></table>"
-        + note
-        + "</section>"
-    )
-
-
-def _glossary_html() -> str:
+def _glossary_html(summary: Optional[Summary] = None) -> str:
     entries = [
         ("ECDF", TIPS["ecdf"]),
         (
@@ -316,12 +346,21 @@ def _glossary_html() -> str:
             "Sender and receiver clocks must be synchronized or values will "
             "be shifted (and can go negative).",
         ),
-        ("Loss", TIPS["loss"]),
-        ("Reordered", TIPS["reordered"]),
-        ("event_id", TIPS["event_id"]),
-        ("Time bin", TIPS["bin"]),
-        ("Send vs receive spacing", FIGURE_BLURBS["send_vs_receive_spacing"]),
     ]
+    if summary is None or summary.show_loss:
+        entries.extend(
+            (
+                ("Loss", TIPS["loss"]),
+                ("Reordered", TIPS["reordered"]),
+            )
+        )
+    entries.extend(
+        (
+            ("event_id", TIPS["event_id"]),
+            ("Time bin", TIPS["bin"]),
+            ("Send vs receive spacing", FIGURE_BLURBS["send_vs_receive_spacing"]),
+        )
+    )
     items = []
     for term, definition in entries:
         items.append(
@@ -340,10 +379,13 @@ def _glossary_html() -> str:
 
 def _footer(summary: Summary) -> str:
     extra = []
+    if summary.protocol:
+        extra.append(html.escape(summary.protocol.upper()))
     if summary.pattern_name:
         extra.append(html.escape(summary.pattern_name))
-    extra.append(f"{summary.packets:,} packets")
-    extra.append(f"{summary.lost_packets:,} lost")
+    extra.append(f"{summary.packets:,} records")
+    if summary.show_loss:
+        extra.append(f"{summary.lost_packets:,} lost")
     return "Generated by ipyrf-report · " + " · ".join(extra)
 
 
@@ -363,13 +405,6 @@ def _term(label: str, tip: str) -> str:
     return (
         f'<span class="tip" tabindex="0" data-tip="{_attr(tip)}">'
         f"{html.escape(label)}</span>"
-    )
-
-
-def _th(label: str, tip: str) -> str:
-    return (
-        f'<th class="tip" tabindex="0" data-tip="{_attr(tip)}">'
-        f"{html.escape(label)}</th>"
     )
 
 
@@ -424,6 +459,31 @@ _DOCUMENT = """<!DOCTYPE html>
     header .subtitle {{
       color: #c5d0e0;
       font-size: 0.92rem;
+    }}
+    .run-meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin: 0.85rem 0 0;
+    }}
+    .run-chip {{
+      display: inline-flex;
+      gap: 0.35rem;
+      align-items: baseline;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 999px;
+      padding: 0.25rem 0.7rem;
+      font-size: 0.8rem;
+    }}
+    .run-label {{
+      color: #b7c4d6;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.68rem;
+    }}
+    .run-value {{
+      color: #fff;
     }}
     .kpis {{
       display: grid;
@@ -481,18 +541,6 @@ _DOCUMENT = """<!DOCTYPE html>
       border-color: #f0d090;
       color: var(--warn-ink);
     }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      font-variant-numeric: tabular-nums;
-      font-size: 0.9rem;
-    }}
-    th, td {{
-      text-align: left;
-      padding: 0.4rem 0.5rem;
-      border-bottom: 1px solid var(--line);
-    }}
-    th {{ color: var(--muted); font-weight: 600; }}
     .note, footer {{
       color: var(--muted);
       font-size: 0.85rem;
@@ -525,9 +573,6 @@ _DOCUMENT = """<!DOCTYPE html>
     }}
     .kpi.tip {{
       border-bottom: 1px solid rgba(255,255,255,0.12);
-    }}
-    th.tip {{
-      border-bottom: 1px solid var(--line);
     }}
     .tip:hover,
     .tip:focus {{
@@ -566,13 +611,13 @@ _DOCUMENT = """<!DOCTYPE html>
   <header>
     <h1>{title}</h1>
     <div class="subtitle">{subtitle}</div>
+    {run_meta}
     <div class="kpis">{kpis}</div>
   </header>
   <main>
     {intro}
     {warnings}
     <!--PLOTS-->
-    {events}
     {glossary}
   </main>
   <footer>{footer}</footer>

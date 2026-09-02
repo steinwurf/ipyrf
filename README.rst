@@ -9,8 +9,8 @@ Features
 - JSON or human-readable output
 - Optional bandwidth capping (TCP/UDP)
 - UDP packet loss estimation
-- Optional per-datagram UDP packet recording
-- Interactive HTML reports from packet recordings (``ipyrf-report``)
+- Optional receive-side recording of UDP datagrams and TCP framed records
+- Interactive HTML reports from ``--record`` CSVs (``ipyrf-report``)
 - Linux TCP congestion control selection (if available)
 - Client ``--bind-dev`` to transmit via a specific network interface (Linux)
 
@@ -89,6 +89,7 @@ TCP server:
 .. code-block:: bash
 
    ipyrf tcp server 0.0.0.0 --port 12345
+   ipyrf tcp server 0.0.0.0 --port 12345 --record records.csv
    ipyrf tcp server 0.0.0.0 --port 12345 --trace-dir /var/traces
 
 TCP client:
@@ -108,7 +109,7 @@ UDP server:
 .. code-block:: bash
 
    ipyrf udp server 0.0.0.0 --port 12345
-   ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.csv
+   ipyrf udp server 0.0.0.0 --port 12345 --record records.csv
    ipyrf udp server 0.0.0.0 --port 12345 --trace-dir /var/traces
 
 UDP client (with bandwidth cap and optional payload size):
@@ -281,6 +282,8 @@ Common options (both protocols, both roles):
 - ``--port``: Port (default 5201)
 - ``--logfile``: Redirect output to a file
 - ``--json_log``: Emit logs in JSON (newline-delimited)
+- ``--record PATH``: Write received records to a CSV file after the test
+  (UDP datagrams or TCP framed records). On a client, requires ``--reverse``
 
 TCP-specific options:
 
@@ -316,7 +319,6 @@ UDP-specific options:
   is sent; the server must have the same file
 - ``--loops N``: Replay ``--traffic-pattern`` N times (default 1)
 - ``-l/--length``: UDP payload length (default 1200)
-- ``--packet-record PATH``: UDP server: write received packet traces to a CSV file after the test
 - ``--inactivity-timeout SECONDS``: UDP server: exit after this many seconds
   without receiving packets (default 2.0)
 - ``--trace-dir DIR``: UDP server: directory of traffic-pattern files for
@@ -341,7 +343,7 @@ Generate options:
 
 Report options (``ipyrf-report``):
 
-- ``RECORD``: Packet-record CSV from ``--packet-record``
+- ``RECORD``: Record CSV from ``--record``
 - ``-o/--output FILE``: HTML output path (default: ``RECORD`` with ``.html``)
 - ``--traffic-pattern FILE``: Traffic-pattern JSON used during the test
 - ``--json FILE``: Also write analysis results as JSON
@@ -349,31 +351,43 @@ Report options (``ipyrf-report``):
 - ``--bin-ms MS``: Time-series bin size in milliseconds (default: auto)
 - ``--title TITLE``: Report title
 
-UDP packet recording
---------------------
+Receive recording
+-----------------
 
-Pass ``--packet-record PATH`` to a UDP server to record one trace entry per
-received datagram (sequence number, sender timestamp, receiver timestamp,
-packet size, and traffic-pattern ``event_id``). Records are packed into
-fixed-size in-memory chunks during the test so the receive path stays free of
-CSV I/O. Chunks are allocated before the test starts (about 20 s of 1 Gbit/s
-traffic by default) so rotation does not stall the receive loop. When the test
-ends, the CSV file (columns ``sequence``, ``size_bytes``, ``transmitted_ns``,
-``received_ns``, ``event_id``) is written to ``PATH``. Per-packet latency in
-nanoseconds is ``received_ns - transmitted_ns``. ``event_id`` is ``0`` unless
-the client used ``--traffic-pattern``.
+Pass ``--record PATH`` on the receiving side (a server, or a client with
+``--reverse``) to write one CSV row per received UDP datagram or complete
+TCP framed record (sequence, sender timestamp, receiver timestamp, size,
+and traffic-pattern ``event_id``). UDP uses the sender sequence number so
+loss and reordering stay visible. TCP assigns sequence in receive order
+(1, 2, 3, …) because the stream has no packet sequence. Records are packed
+into fixed-size in-memory chunks during the test so the receive path stays
+free of CSV I/O. Chunks are allocated before the test starts (about 20 s of
+1 Gbit/s traffic by default) so rotation does not stall the receive loop.
+When the test ends, the CSV file is written to ``PATH``. It starts with a
+``# ipyrf-record 1`` magic line and a ``# { ... }`` JSON comment describing
+the run (protocol, sequence kind, addresses, optional traffic pattern),
+then the header row and data (columns ``sequence``, ``size_bytes``,
+``transmitted_ns``, ``received_ns``, ``event_id``).
+One-way latency in nanoseconds is ``received_ns - transmitted_ns``.
+``event_id`` is ``0`` unless the sender used ``--traffic-pattern``.
+``ipyrf-report`` reads that metadata to label the run and to omit TCP
+loss/reorder charts. Pass ``--traffic-pattern`` to override an embedded
+pattern. Spreadsheet tools treat the ``#`` lines as extra rows; skip them
+or use ``ipyrf-report``.
 
 Quick local test (two terminals):
 
 .. code-block:: bash
 
    # Terminal 1 — server with recording
-   ipyrf udp server 0.0.0.0 --port 12345 --packet-record packets.csv
+   ipyrf udp server 0.0.0.0 --port 12345 --record records.csv
+   # or: ipyrf tcp server 0.0.0.0 --port 12345 --record records.csv
 
    # Terminal 2 — short paced client
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 2 -l 1200
+   # or: ipyrf tcp client 127.0.0.1 --port 12345 --bandwidth 50M --time 2
 
-When the client finishes, the server exits and ``packets.csv`` contains the
+When the client finishes, the server exits and ``records.csv`` contains the
 trace. Use ``--enable-latency`` on the client if you also want latency
 stats in the server summary. Turn the CSV into an interactive HTML report
 with ``ipyrf-report`` (see below).
@@ -381,22 +395,23 @@ with ``ipyrf-report`` (see below).
 Reports (ipyrf-report)
 ----------------------
 
-``ipyrf-report`` reads a ``--packet-record`` CSV and writes one self-contained
-interactive HTML file (Plotly.js is embedded, so the file works offline).
-Pass the traffic-pattern JSON used during the test to label events, shade
-time-series by ``event_id`` / tags, and compare received bytes to the
-pattern.
+``ipyrf-report`` reads a ``--record`` CSV (including the JSON metadata
+comment) and writes one self-contained interactive HTML file (Plotly.js is
+embedded, so the file works offline). Pass ``--traffic-pattern`` to override
+a pattern embedded in the record metadata; otherwise the report uses the
+embedded pattern when present.
 
 The report is laid out like a performance trace: KPI overview at the top,
-then throughput, latency (p50 / p95 / p99), loss, sequence / reordering,
-send vs receive spacing, and latency distribution / ECDF.
+then throughput, latency (p50 / p95 / p99), loss and sequence / reordering
+when the recording is UDP, send vs receive spacing, and latency
+distribution / ECDF.
 
 .. code-block:: bash
 
-   ipyrf-report packets.csv
-   ipyrf-report packets.csv -o report.html --traffic-pattern trace.json
-   ipyrf-report packets.csv --json report.json --bin-ms 10
-   ipyrf-report packets.csv --png --svg
+   ipyrf-report records.csv
+   ipyrf-report records.csv -o report.html --traffic-pattern trace.json
+   ipyrf-report records.csv --json report.json --bin-ms 10
+   ipyrf-report records.csv --png --svg
 
 ``-o`` defaults to the record path with a ``.html`` suffix. ``--png`` and
 ``--svg`` write individual plots next to the HTML (or to a directory you

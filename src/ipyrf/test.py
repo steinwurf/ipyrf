@@ -87,6 +87,7 @@ class IPyrfClient:
         self,
         address,
         port,
+        record=None,
         packet_record=None,
         inactivity_timeout=None,
         trace_dir=None,
@@ -97,21 +98,23 @@ class IPyrfClient:
         Args:
             address: IP address to bind to.
             port: Port number to listen on.
-            packet_record: Optional CSV path for UDP packet traces.
+            record: Optional CSV path for received-record traces.
+            packet_record: Deprecated alias for ``record``.
             inactivity_timeout: Optional seconds without packets before exit.
             trace_dir: Optional directory of traffic-pattern files for
                 reverse tests.
         """
         args = ["udp", "server", address, "--port", str(port)]
-        if packet_record is not None:
-            args += ["--packet-record", str(packet_record)]
+        record = record if record is not None else packet_record
+        if record is not None:
+            args += ["--record", str(record)]
         if inactivity_timeout is not None:
             args += ["--inactivity-timeout", str(inactivity_timeout)]
         if trace_dir is not None:
             args += ["--trace-dir", str(trace_dir)]
         self.__run(args)
 
-    def run_tcp_server(self, address, port, trace_dir=None):
+    def run_tcp_server(self, address, port, trace_dir=None, record=None):
         """
         Run ipyrf as a TCP server.
 
@@ -120,10 +123,13 @@ class IPyrfClient:
             port: Port number to listen on.
             trace_dir: Optional directory of traffic-pattern files for
                 reverse tests.
+            record: Optional CSV path for received-record traces.
         """
         args = ["tcp", "server", address, "--port", str(port)]
         if trace_dir is not None:
             args += ["--trace-dir", str(trace_dir)]
+        if record is not None:
+            args += ["--record", str(record)]
         self.__run(args)
 
     def run_udp_client(
@@ -138,6 +144,7 @@ class IPyrfClient:
         reverse=False,
         traffic_pattern=None,
         loops=None,
+        record=None,
     ):
         """
         Run ipyrf as a UDP client.
@@ -154,6 +161,8 @@ class IPyrfClient:
             traffic_pattern: Optional traffic-pattern JSON path. With
                 reverse, only the file name is sent to the server.
             loops: Optional replay count for ``traffic_pattern``.
+            record: Optional CSV path for received-record traces
+                (``--reverse`` only).
         """
         args = [
             "udp",
@@ -178,6 +187,8 @@ class IPyrfClient:
             args += ["--reverse"]
         if loops is not None:
             args += ["--loops", str(loops)]
+        if record is not None:
+            args += ["--record", str(record)]
         self.__run(args)
 
     def run_tcp_client(
@@ -192,6 +203,7 @@ class IPyrfClient:
         reverse=False,
         traffic_pattern=None,
         loops=None,
+        record=None,
     ):
         """
         Run ipyrf as a TCP client.
@@ -209,6 +221,8 @@ class IPyrfClient:
             traffic_pattern: Optional traffic-pattern JSON path. With
                 reverse, only the file name is sent to the server.
             loops: Optional replay count for ``traffic_pattern``.
+            record: Optional CSV path for received-record traces
+                (``--reverse`` only).
         """
         args = [
             "tcp",
@@ -233,6 +247,8 @@ class IPyrfClient:
             args += ["--reverse"]
         if loops is not None:
             args += ["--loops", str(loops)]
+        if record is not None:
+            args += ["--record", str(record)]
         self.__run(args)
 
     def __run(self, args):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -43,6 +44,50 @@ def parse_loops(value: str) -> int:
     return loops
 
 
+def _record_run_metadata(
+    args,
+    *,
+    reverse: bool,
+    reverse_trace_name,
+    loops: int,
+    pattern_path,
+) -> dict:
+    meta = {
+        "protocol": args.protocol,
+        "role": args.role,
+        "reverse": bool(reverse),
+        "sequence": "sender" if args.protocol == "udp" else "receive_order",
+        "record_unit": "datagram" if args.protocol == "udp" else "tcp_record",
+        "direction": "rx",
+    }
+    if reverse:
+        if getattr(args, "bandwidth", None) is not None:
+            meta["bandwidth_bps"] = args.bandwidth
+        if pattern_path is None and getattr(args, "time", None) is not None:
+            meta["duration_s"] = float(args.time)
+        if loops != 1:
+            meta["loops"] = loops
+        if reverse_trace_name:
+            meta["traffic_pattern_name"] = reverse_trace_name
+        if pattern_path:
+            try:
+                with open(pattern_path, encoding="utf-8") as f:
+                    meta["traffic_pattern"] = json.load(f)
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
+        if args.protocol == "udp" and getattr(args, "length", None) is not None:
+            meta["payload_len"] = args.length
+        if args.protocol == "tcp":
+            if getattr(args, "congestion_control", None):
+                meta["congestion_control"] = args.congestion_control
+            if getattr(args, "set_mss", None):
+                meta["mss"] = args.set_mss
+    elif args.role == "server" and args.protocol == "tcp":
+        if getattr(args, "congestion_control", None):
+            meta["congestion_control"] = args.congestion_control
+    return meta
+
+
 def main():
     try:
         _main()
@@ -63,6 +108,18 @@ def _main():
         help="Write the log messages as JSON.",
         action="store_true",
         default=False,
+    )
+    common.add_argument(
+        "--record",
+        metavar="PATH",
+        dest="record_path",
+        help="Write received records to a CSV file after the test",
+    )
+    common.add_argument(
+        "--packet-record",
+        dest="record_path",
+        metavar="PATH",
+        help=argparse.SUPPRESS,
     )
 
     subp = p.add_subparsers(dest="protocol", required=True)
@@ -244,14 +301,11 @@ def _main():
     udp_parser = subp.add_parser("udp", help="UDP mode")
     udp_sub = udp_parser.add_subparsers(dest="role", required=True)
 
-    udp_srv = udp_sub.add_parser("server", parents=[common], help="Run a UDP server")
-    udp_srv.add_argument(
-        "address", metavar="ADDRESS", type=parse_ip, help="Listen address"
+    udp_srv = udp_sub.add_parser(
+        "server", parents=[common], help="Run a UDP server"
     )
     udp_srv.add_argument(
-        "--packet-record",
-        metavar="PATH",
-        help="Write received UDP packet traces to a CSV file after the test",
+        "address", metavar="ADDRESS", type=parse_ip, help="Listen address"
     )
     udp_srv.add_argument(
         "--inactivity-timeout",
@@ -270,7 +324,9 @@ def _main():
         ),
     )
 
-    udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")
+    udp_cli = udp_sub.add_parser(
+        "client", parents=[common], help="Run a UDP client"
+    )
     udp_cli.add_argument("address", metavar="ADDRESS", help="Server address to connect")
     udp_cli.add_argument(
         "--bandwidth", type=parse_bandwidth, help="Target bandwidth, e.g., 50M"
@@ -392,12 +448,29 @@ def _main():
     if reverse and getattr(args, "interactive", False):
         p.error("--reverse cannot be combined with --interactive")
 
+    record_path = getattr(args, "record_path", None)
+    if record_path is not None and args.role == "client" and not reverse:
+        p.error(
+            "--record is only used when receiving "
+            "(pass it to the server, or combine with --reverse)"
+        )
+
     reverse_trace_name = None
     if reverse and pattern_path is not None:
         try:
             reverse_trace_name = reverse_trace_file_name(pattern_path)
         except ValueError as e:
             p.error(str(e))
+
+    record_metadata = None
+    if record_path is not None:
+        record_metadata = _record_run_metadata(
+            args,
+            reverse=reverse,
+            reverse_trace_name=reverse_trace_name,
+            loops=loops,
+            pattern_path=pattern_path,
+        )
 
     log = Logger(
         args.json_log,
@@ -413,9 +486,10 @@ def _main():
                 log,
                 args.address,
                 args.port,
-                packet_record_path=args.packet_record,
+                record_path=record_path,
                 inactivity_timeout=args.inactivity_timeout,
                 trace_dir=args.trace_dir,
+                record_metadata=record_metadata,
             )
         else:
             if reverse:
@@ -434,6 +508,8 @@ def _main():
                         loops=loops,
                     ),
                     bind_dev=args.bind_dev,
+                    record_path=record_path,
+                    record_metadata=record_metadata,
                 )
             else:
                 if pattern is not None:
@@ -469,6 +545,8 @@ def _main():
                 args.port,
                 congestion_control=args.congestion_control,
                 trace_dir=args.trace_dir,
+                record_path=record_path,
+                record_metadata=record_metadata,
             )
         else:
             if reverse:
@@ -487,6 +565,8 @@ def _main():
                         loops=loops,
                     ),
                     bind_dev=args.bind_dev,
+                    record_path=record_path,
+                    record_metadata=record_metadata,
                 )
             else:
                 # TCP record header is sent in addition to the payload returned by

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bisect
 from collections import Counter, defaultdict
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .data import (
     REPORT_VERSION,
@@ -231,6 +231,10 @@ def analyze(
         event_spans,
     )
     unique_event_ids = {eid for eid in event_id if eid != 0}
+    meta = packets.metadata or {}
+    protocol = _optional_str(meta.get("protocol"))
+    sequence_kind = _optional_str(meta.get("sequence"))
+    show_loss = protocol != "tcp" and sequence_kind != "receive_order"
 
     pattern_name = None
     pattern_type = None
@@ -243,6 +247,15 @@ def analyze(
             pattern_name = str(name)
         elif pattern.metadata.get("generator"):
             pattern_name = str(pattern.metadata.get("generator"))
+        elif meta.get("traffic_pattern_name"):
+            pattern_name = str(meta["traffic_pattern_name"])
+
+    if not show_loss:
+        warnings = [
+            w
+            for w in warnings
+            if "duplicate sequence" not in w
+        ]
 
     summary = Summary(
         packets=n,
@@ -252,10 +265,10 @@ def analyze(
         unique_sequences=unique_sequences,
         first_sequence=min_seq,
         last_sequence=max_seq,
-        lost_packets=lost_count,
-        lost_percent=lost_percent,
-        duplicate_packets=duplicate_packets,
-        reordered_packets=len(reordered_indices),
+        lost_packets=lost_count if show_loss else 0,
+        lost_percent=lost_percent if show_loss else 0.0,
+        duplicate_packets=duplicate_packets if show_loss else 0,
+        reordered_packets=len(reordered_indices) if show_loss else 0,
         latency_min_ms=sorted_lat_all[0] if sorted_lat_all else None,
         latency_max_ms=sorted_lat_all[-1] if sorted_lat_all else None,
         latency_mean_ms=(sum(sorted_lat_all) / len(sorted_lat_all))
@@ -271,6 +284,19 @@ def analyze(
         pattern_source=pattern_source,
         pattern_type=pattern_type,
         pattern_name=pattern_name,
+        protocol=protocol,
+        sequence_kind=sequence_kind,
+        record_unit=_optional_str(meta.get("record_unit")),
+        receiver=_optional_str(meta.get("receiver")),
+        sender=_optional_str(meta.get("sender")),
+        reverse=bool(meta.get("reverse")),
+        role=_optional_str(meta.get("role")),
+        bandwidth_bps=_optional_float(meta.get("bandwidth_bps")),
+        configured_duration_s=_optional_float(meta.get("duration_s")),
+        payload_len=_optional_int(meta.get("payload_len")),
+        stop_reason=_optional_str(meta.get("stop_reason")),
+        congestion_control=_optional_str(meta.get("congestion_control")),
+        show_loss=show_loss,
         warnings=warnings,
     )
 
@@ -285,8 +311,8 @@ def analyze(
         spacing=spacing,
         latency_histogram=_histogram(sorted_lat_all),
         latency_ecdf=_ecdf(sorted_lat_all),
-        loss_runs=loss_runs,
-        reorder_events=reorder_events,
+        loss_runs=loss_runs if show_loss else [],
+        reorder_events=reorder_events if show_loss else [],
     )
 
 
@@ -518,3 +544,28 @@ def _ecdf(sorted_values: Sequence[float]) -> Ecdf:
         values.append(float(sorted_values[i]))
         probabilities.append((i + 1) / n)
     return Ecdf(values=values, probabilities=probabilities)
+
+
+def _optional_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

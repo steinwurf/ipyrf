@@ -26,7 +26,7 @@ from .controllers import (
     BasePacingController,
     controller_from_reverse_config,
 )
-from .packet_recorder import PacketRecorder
+from .recorder import Recorder
 from .utils import bind_to_device
 
 
@@ -110,8 +110,9 @@ class UdpReceiver:
         log: Logger,
         bind_addr: str,
         port: int,
-        packet_record_path: Optional[str] = None,
+        record_path: Optional[str] = None,
         inactivity_timeout: float = 2.0,
+        record_metadata: Optional[dict] = None,
     ):
         self.sock = sock
         self.log = log
@@ -120,8 +121,8 @@ class UdpReceiver:
         self.inactivity_timeout = inactivity_timeout
         self.recv_buffer = bytearray(65535)
         self.recorder = (
-            PacketRecorder(packet_record_path)
-            if packet_record_path is not None
+            Recorder(record_path, metadata=record_metadata)
+            if record_path is not None
             else None
         )
         self.active = False
@@ -176,8 +177,28 @@ class UdpReceiver:
                 break
 
     def close_recorder(self) -> None:
-        if self.recorder is not None:
-            self.recorder.close()
+        if self.recorder is None:
+            return
+        dur = (
+            max(1e-9, time.time() - self.start) if self.active else 0.0
+        )
+        self.recorder.update_metadata(
+            protocol="udp",
+            sequence="sender",
+            record_unit="datagram",
+            direction="rx",
+            receiver=f"{self.bind_addr}:{self.port}",
+            sender=(
+                None
+                if not self.src_peer
+                else f"{self.src_peer[0]}:{self.src_peer[1]}"
+            ),
+            stop_reason=self.stop_reason,
+            seconds=dur,
+            bytes=self.bytes_received,
+            latency_enabled=self.latency.enabled,
+        )
+        self.recorder.close()
 
     def summarize(self) -> None:
         end = time.time()
@@ -207,8 +228,8 @@ class UdpReceiver:
         }
         summary_fields.update(self.latency.summary_fields())
         if self.recorder is not None:
-            summary_fields["packet_record_count"] = self.recorder.recorded
-            summary_fields["packet_record_dropped"] = self.recorder.dropped
+            summary_fields["record_count"] = self.recorder.recorded
+            summary_fields["record_dropped"] = self.recorder.dropped
         self.log.summary(**summary_fields)
 
     def _begin(self, packet: UdpPacket) -> None:
@@ -237,11 +258,11 @@ class UdpReceiver:
         self.last_seq_seen = max(self.last_seq_seen, packet.seq)
         if self.recorder is not None:
             self.recorder.add(
-                packet.seq,
                 packet.timestamp_ns,
                 now_ns,
                 packet.size,
                 packet.event_id,
+                seq=packet.seq,
             )
 
         if self.latency.enabled:
@@ -415,9 +436,10 @@ def server(
     log: Logger,
     bind_addr: str,
     port: int,
-    packet_record_path: Optional[str] = None,
+    record_path: Optional[str] = None,
     inactivity_timeout: float = 2.0,
     trace_dir: Optional[str] = None,
+    record_metadata: Optional[dict] = None,
 ):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -430,8 +452,9 @@ def server(
         log,
         bind_addr,
         port,
-        packet_record_path=packet_record_path,
+        record_path=record_path,
         inactivity_timeout=inactivity_timeout,
+        record_metadata=record_metadata,
     )
     try:
         first = receiver.wait_first()
@@ -514,6 +537,8 @@ def client(
     bind_dev: Optional[str] = None,
     reverse_config: Optional[ReverseConfig] = None,
     inactivity_timeout: float = 2.0,
+    record_path: Optional[str] = None,
+    record_metadata: Optional[dict] = None,
 ):
     if payload_len < UDP_HDR.size:
         payload_len = UDP_HDR.size
@@ -532,6 +557,8 @@ def client(
             port,
             reverse_config,
             inactivity_timeout,
+            record_path=record_path,
+            record_metadata=record_metadata,
         )
         return
 
@@ -552,6 +579,8 @@ def _run_udp_reverse_receive(
     port: int,
     reverse_config: ReverseConfig,
     inactivity_timeout: float,
+    record_path: Optional[str] = None,
+    record_metadata: Optional[dict] = None,
 ) -> None:
     packed = pack_reverse_config(reverse_config)
     last_err = None
@@ -580,7 +609,9 @@ def _run_udp_reverse_receive(
         log,
         local[0],
         local[1],
+        record_path=record_path,
         inactivity_timeout=inactivity_timeout,
+        record_metadata=record_metadata,
     )
     try:
         first = receiver.wait_first()

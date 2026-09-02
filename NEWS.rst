@@ -6,11 +6,19 @@ every change, see the Git log.
 
 Latest
 ------
+* Patch: ``ipyrf-report`` HTML generation is much faster when a traffic
+  pattern has many events.
 * Minor: Added ``ipyrf-report`` to generate a self-contained interactive
-  HTML report from a ``--packet-record`` CSV. Optional
+  HTML report from a ``--record`` CSV. Optional
   ``--traffic-pattern`` labels and shades events; ``--json`` writes
   analysis results; ``--png`` / ``--svg`` export static plots when
   kaleido is installed.
+* Minor: Renamed ``--packet-record`` to ``--record``.
+* Minor: Recording now covers TCP as well as UDP.
+* Minor: ``--record`` CSV files start with a JSON metadata comment
+  (protocol, sequence kind, addresses, optional embedded traffic
+  pattern). ``ipyrf-report`` uses it to label the run and to omit
+  loss/reorder charts for TCP.
 
 2.0.0
 -----

@@ -77,14 +77,15 @@ def build_export_figures(data: ReportData) -> "OrderedDict[str, go.Figure]":
         ylabel="Latency (ms)",
         traces=_latency_traces(data.bins),
     )
-    figures["loss"] = _single_axis_figure(
-        data,
-        title="Packet loss",
-        ylabel="Lost packets",
-        traces=_loss_traces(data.bins),
-        bar=True,
-    )
-    figures["sequence"] = _sequence_figure(data)
+    if data.summary.show_loss:
+        figures["loss"] = _single_axis_figure(
+            data,
+            title="Packet loss",
+            ylabel="Lost packets",
+            traces=_loss_traces(data.bins),
+            bar=True,
+        )
+        figures["sequence"] = _sequence_figure(data)
     figures["spacing"] = _single_axis_figure(
         data,
         title="Send spacing vs receive spacing",
@@ -107,15 +108,20 @@ def _overview_figure(data: ReportData) -> "go.Figure":
         [
             ("Throughput", _throughput_traces(data.bins), "Mbps", False),
             ("Latency", _latency_traces(data.bins), "ms", False),
-            ("Packet loss", _loss_traces(data.bins), "lost pkts", True),
-            ("Sequence / reordering", _sequence_traces(data), "sequence", False),
-            (
-                "Send vs receive spacing",
-                _spacing_traces(data.bins),
-                "µs",
-                False,
-            ),
         ]
+    )
+    if data.summary.show_loss:
+        rows.append(("Packet loss", _loss_traces(data.bins), "lost pkts", True))
+        rows.append(
+            ("Sequence / reordering", _sequence_traces(data), "sequence", False)
+        )
+    rows.append(
+        (
+            "Send vs receive spacing",
+            _spacing_traces(data.bins),
+            "µs",
+            False,
+        )
     )
 
     n_rows = len(rows)
@@ -489,23 +495,39 @@ def _add_event_shading(
     if not merged or len(merged) > MAX_VRECTS:
         return
     row_list = list(rows) if rows is not None else []
+    axis_refs = (
+        [_xy_refs_for_row(row) for row in row_list]
+        if row_list
+        else [("x", "y")]
+    )
+    shapes = list(fig.layout.shapes) if fig.layout.shapes else []
+    for start, end, _key, color in merged:
+        for xref, yref in axis_refs:
+            shapes.append(
+                dict(
+                    type="rect",
+                    xref=xref,
+                    yref=f"{yref} domain",
+                    x0=start,
+                    x1=end,
+                    y0=0,
+                    y1=1,
+                    fillcolor=color,
+                    opacity=0.12,
+                    line=dict(width=0),
+                    layer="below",
+                )
+            )
+    fig.update_layout(shapes=shapes)
+
     seen_keys = set()
-    for start, end, key, color in merged:
-        vrect = dict(
-            x0=start,
-            x1=end,
-            fillcolor=color,
-            opacity=0.12,
-            line_width=0,
-            layer="below",
-        )
-        if row_list:
-            for row in row_list:
-                fig.add_vrect(**vrect, row=row, col=1)
-        else:
-            fig.add_vrect(**vrect)
-        if key not in seen_keys:
-            legend = go.Scatter(
+    legend_traces = []
+    for _start, _end, key, color in merged:
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        legend_traces.append(
+            go.Scatter(
                 x=[None],
                 y=[None],
                 mode="markers",
@@ -514,13 +536,22 @@ def _add_event_shading(
                 hoverinfo="skip",
                 showlegend=True,
             )
-            if legend_row is not None:
-                fig.add_trace(legend, row=legend_row, col=1)
-            elif row_list:
-                fig.add_trace(legend, row=row_list[0], col=1)
-            else:
-                fig.add_trace(legend)
-            seen_keys.add(key)
+        )
+    target_row = legend_row if legend_row is not None else (
+        row_list[0] if row_list else None
+    )
+    for legend in legend_traces:
+        if target_row is not None:
+            fig.add_trace(legend, row=target_row, col=1)
+        else:
+            fig.add_trace(legend)
+
+
+def _xy_refs_for_row(row: int) -> Tuple[str, str]:
+    """Plotly subplot axis ids for a 1-indexed row in a single-column figure."""
+    if row <= 1:
+        return "x", "y"
+    return f"x{row}", f"y{row}"
 
 
 def _merged_shading_spans(
@@ -539,7 +570,7 @@ def _merged_shading_spans(
     merged = [keyed[0]]
     for start, end, key, color in keyed[1:]:
         prev_start, prev_end, prev_key, prev_color = merged[-1]
-        if key == prev_key and start <= prev_end + 1e-9:
+        if key == prev_key:
             merged[-1] = (prev_start, max(prev_end, end), prev_key, prev_color)
         else:
             merged.append((start, end, key, color))

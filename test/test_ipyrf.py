@@ -3,9 +3,10 @@ import dummynet
 import logging
 import os
 import csv
+import io
 import json
 
-from ipyrf.packet_recorder import CSV_COLUMNS
+from ipyrf.recorder import CSV_COLUMNS, parse_record_text
 
 log = logging.getLogger(__name__)
 
@@ -139,14 +140,14 @@ def test_ipyrf_udp_basic_loopback(ipyrf, free_port):
     )
 
 
-def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
+def test_ipyrf_udp_record_cli(ipyrf, testdirectory, free_port):
 
-    csv_path = os.path.join(testdirectory.path(), "packets.csv")
+    csv_path = os.path.join(testdirectory.path(), "records.csv")
 
     server = ipyrf.build()
     client = ipyrf.build()
 
-    server.run_udp_server("127.0.0.1", free_port, packet_record=csv_path)
+    server.run_udp_server("127.0.0.1", free_port, record=csv_path)
     client.run_udp_client("127.0.0.1", free_port, duration=2, bandwidth="10M")
 
     ipyrf.check(
@@ -158,17 +159,45 @@ def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
     )
 
     summary = server.wait_for_summary(timeout=5)
-    assert "packet_record_count" in summary
-    assert summary["packet_record_count"] == summary["packets"]
-    assert summary["packet_record_dropped"] == 0
-    assert summary["packet_record_count"] > 0
+    assert "record_count" in summary
+    assert summary["record_count"] == summary["packets"]
+    assert summary["record_dropped"] == 0
+    assert summary["record_count"] > 0
 
-    with open(csv_path, newline="") as f:
-        rows = list(csv.DictReader(f))
+    meta, csv_text = parse_record_text(open(csv_path, encoding="utf-8").read())
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
-    assert len(rows) == summary["packet_record_count"]
+    assert len(rows) == summary["record_count"]
     assert int(rows[0]["received_ns"]) >= int(rows[0]["transmitted_ns"])
     assert int(rows[0]["size_bytes"]) > 0
+    assert meta["protocol"] == "udp"
+
+
+def test_ipyrf_tcp_record_cli(ipyrf, testdirectory, free_port):
+
+    csv_path = os.path.join(testdirectory.path(), "records.csv")
+
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_tcp_server("127.0.0.1", free_port, record=csv_path)
+    client.run_tcp_client("127.0.0.1", free_port, duration=2, bandwidth="10M")
+
+    ipyrf.check((server, client), timeout=5)
+
+    summary = server.wait_for_summary(timeout=5)
+    assert "record_count" in summary
+    assert summary["record_dropped"] == 0
+    assert summary["record_count"] > 0
+
+    meta, csv_text = parse_record_text(open(csv_path, encoding="utf-8").read())
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert list(rows[0].keys()) == list(CSV_COLUMNS)
+    assert len(rows) == summary["record_count"]
+    assert [int(r["sequence"]) for r in rows] == list(range(1, len(rows) + 1))
+    assert int(rows[0]["received_ns"]) >= int(rows[0]["transmitted_ns"])
+    assert int(rows[0]["size_bytes"]) > 0
+    assert meta["protocol"] == "tcp"
 
 
 def test_ipyrf_run_failed(ipyrf):

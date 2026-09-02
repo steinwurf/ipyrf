@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from ..packet_recorder import CSV_COLUMNS
+from ..recorder import CSV_COLUMNS, parse_record_text
 from ..traffic_pattern import TrafficPatternError, parse_traffic_pattern
 from ..utils import parse_bandwidth
 from .data import PacketTrace, PatternEvent, PatternInfo
@@ -19,65 +20,66 @@ REQUIRED_COLUMNS = (
 
 
 class ReportError(ValueError):
-    """Raised when a packet record, pattern file, or report option is invalid."""
+    """Raised when a record CSV, pattern file, or report option is invalid."""
 
 
-def load_packet_record(path: Union[str, Path]) -> PacketTrace:
-    """Load and validate an ipyrf ``--packet-record`` CSV file."""
+def load_record(path: Union[str, Path]) -> PacketTrace:
+    """Load and validate an ipyrf ``--record`` CSV file."""
     path = Path(path)
     try:
-        text = path.open("r", newline="", encoding="utf-8-sig")
+        raw = path.read_text(encoding="utf-8-sig")
     except OSError as e:
         raise ReportError(f"cannot read {path}: {e}") from e
 
-    with text as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames is None:
-            raise ReportError(f"{path}: file has no header row")
-        fields = [_normalize_header(name) for name in reader.fieldnames]
-        missing = [c for c in REQUIRED_COLUMNS if c not in fields]
-        if missing:
-            raise ReportError(
-                f"{path}: missing required column(s) {', '.join(missing)}; "
-                f"expected {', '.join(CSV_COLUMNS)}"
-            )
-        reader.fieldnames = fields
-        has_event_id = "event_id" in fields
+    metadata, csv_text = parse_record_text(raw)
+    reader = csv.DictReader(io.StringIO(csv_text))
+    if reader.fieldnames is None:
+        raise ReportError(f"{path}: file has no header row")
+    fields = [_normalize_header(name) for name in reader.fieldnames]
+    missing = [c for c in REQUIRED_COLUMNS if c not in fields]
+    if missing:
+        raise ReportError(
+            f"{path}: missing required column(s) {', '.join(missing)}; "
+            f"expected {', '.join(CSV_COLUMNS)}"
+        )
+    reader.fieldnames = fields
+    has_event_id = "event_id" in fields
 
-        sequence: List[int] = []
-        size_bytes: List[int] = []
-        transmitted_ns: List[int] = []
-        received_ns: List[int] = []
-        event_id: List[int] = []
+    sequence: List[int] = []
+    size_bytes: List[int] = []
+    transmitted_ns: List[int] = []
+    received_ns: List[int] = []
+    event_id: List[int] = []
 
-        for line_number, row in enumerate(reader, start=2):
-            try:
-                seq = _parse_int(row.get("sequence"), "sequence")
-                size = _parse_int(row.get("size_bytes"), "size_bytes")
-                tx_ns = _parse_int(row.get("transmitted_ns"), "transmitted_ns")
-                rx_ns = _parse_int(row.get("received_ns"), "received_ns")
-                if size < 0:
-                    raise ReportError("size_bytes must be >= 0")
-                if tx_ns < 0:
-                    raise ReportError("transmitted_ns must be >= 0")
-                if rx_ns < 0:
-                    raise ReportError("received_ns must be >= 0")
-                if has_event_id:
-                    eid = _parse_int(row.get("event_id"), "event_id")
-                    if eid < 0:
-                        raise ReportError("event_id must be >= 0")
-                else:
-                    eid = 0
-            except ReportError as e:
-                raise ReportError(f"{path}:{line_number}: {e}") from e
-            sequence.append(seq)
-            size_bytes.append(size)
-            transmitted_ns.append(tx_ns)
-            received_ns.append(rx_ns)
-            event_id.append(eid)
+    comment_lines = raw.count("\n") - csv_text.count("\n")
+    for line_number, row in enumerate(reader, start=comment_lines + 2):
+        try:
+            seq = _parse_int(row.get("sequence"), "sequence")
+            size = _parse_int(row.get("size_bytes"), "size_bytes")
+            tx_ns = _parse_int(row.get("transmitted_ns"), "transmitted_ns")
+            rx_ns = _parse_int(row.get("received_ns"), "received_ns")
+            if size < 0:
+                raise ReportError("size_bytes must be >= 0")
+            if tx_ns < 0:
+                raise ReportError("transmitted_ns must be >= 0")
+            if rx_ns < 0:
+                raise ReportError("received_ns must be >= 0")
+            if has_event_id:
+                eid = _parse_int(row.get("event_id"), "event_id")
+                if eid < 0:
+                    raise ReportError("event_id must be >= 0")
+            else:
+                eid = 0
+        except ReportError as e:
+            raise ReportError(f"{path}:{line_number}: {e}") from e
+        sequence.append(seq)
+        size_bytes.append(size)
+        transmitted_ns.append(tx_ns)
+        received_ns.append(rx_ns)
+        event_id.append(eid)
 
     if not sequence:
-        raise ReportError(f"{path}: no packet records")
+        raise ReportError(f"{path}: no records")
 
     return PacketTrace(
         sequence=sequence,
@@ -86,7 +88,26 @@ def load_packet_record(path: Union[str, Path]) -> PacketTrace:
         received_ns=received_ns,
         event_id=event_id,
         source=str(path),
+        metadata=metadata,
     )
+
+
+def pattern_from_record_metadata(
+    metadata: Optional[Dict[str, Any]],
+) -> Optional[PatternInfo]:
+    """Return pattern info embedded in record metadata, if valid."""
+    if not metadata:
+        return None
+    doc = metadata.get("traffic_pattern")
+    if not isinstance(doc, dict):
+        return None
+    try:
+        parse_traffic_pattern(doc, source="record metadata")
+    except TrafficPatternError:
+        return None
+    name = metadata.get("traffic_pattern_name")
+    source = str(name) if name else "record metadata"
+    return _pattern_info_from_document(doc, source=source)
 
 
 def load_pattern_info(path: Union[str, Path]) -> PatternInfo:

@@ -24,13 +24,13 @@ def _main() -> None:
         prog="ipyrf-report",
         description=(
             "Generate a self-contained interactive HTML report from an "
-            "ipyrf --packet-record CSV (optional traffic-pattern JSON)."
+            "ipyrf --record CSV (optional traffic-pattern JSON)."
         ),
     )
     parser.add_argument(
         "record",
         metavar="RECORD",
-        help="Packet-record CSV written by ipyrf udp server --packet-record",
+        help="Record CSV written by ipyrf --record",
     )
     parser.add_argument(
         "-o",

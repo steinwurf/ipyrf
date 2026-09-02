@@ -6,7 +6,7 @@ from typing import Optional, Union
 from .analysis import analyze
 from .export import write_images
 from .html import write_html
-from .loader import load_packet_record, load_pattern_info
+from .loader import load_pattern_info, load_record, pattern_from_record_metadata
 from .data import ReportData
 
 
@@ -21,13 +21,12 @@ def generate_report(
     bin_ms: Optional[float] = None,
     title: Optional[str] = None,
 ) -> ReportData:
-    """Load a packet record, analyze it, and write HTML (and optional exports)."""
-    packets = load_packet_record(record_path)
-    pattern = (
-        load_pattern_info(traffic_pattern_path)
-        if traffic_pattern_path is not None
-        else None
-    )
+    """Load a ``--record`` CSV, analyze it, and write HTML (and optional exports)."""
+    packets = load_record(record_path)
+    if traffic_pattern_path is not None:
+        pattern = load_pattern_info(traffic_pattern_path)
+    else:
+        pattern = pattern_from_record_metadata(packets.metadata)
     bin_ns = None
     if bin_ms is not None:
         bin_ns = max(1, int(float(bin_ms) * 1e6))

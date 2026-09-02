@@ -25,6 +25,7 @@ from .controllers import (
     BasePacingController,
     controller_from_reverse_config,
 )
+from .recorder import Recorder
 from .utils import bind_to_device
 
 # TCP record header: latency flag, payload length, send timestamp (ns), event id
@@ -134,6 +135,8 @@ class TcpReceiver:
         bind_addr: str,
         port: int,
         peer: tuple[str, int],
+        record_path: Optional[str] = None,
+        record_metadata: Optional[dict] = None,
     ):
         self.conn = conn
         self.log = log
@@ -149,6 +152,11 @@ class TcpReceiver:
         self.last_bytes = 0
         self.latency = LatencyTracker()
         self._started = False
+        self.recorder = (
+            Recorder(record_path, metadata=record_metadata)
+            if record_path is not None
+            else None
+        )
 
     def begin(self, start: Optional[float] = None) -> None:
         self.start = time.time() if start is None else start
@@ -198,7 +206,28 @@ class TcpReceiver:
             "direction": "rx",
         }
         summary_fields.update(self.latency.summary_fields())
+        if self.recorder is not None:
+            summary_fields["record_count"] = self.recorder.recorded
+            summary_fields["record_dropped"] = self.recorder.dropped
         self.log.summary(**summary_fields)
+
+    def close_recorder(self) -> None:
+        if self.recorder is None:
+            return
+        dur = max(1e-9, time.time() - self.start) if self._started else 0.0
+        self.recorder.update_metadata(
+            protocol="tcp",
+            sequence="receive_order",
+            record_unit="tcp_record",
+            direction="rx",
+            receiver=f"{self.bind_addr}:{self.port}",
+            sender=f"{self.peer[0]}:{self.peer[1]}",
+            stop_reason=self.stop_reason,
+            seconds=dur,
+            bytes=self.bytes_recv,
+            latency_enabled=self.latency.enabled,
+        )
+        self.recorder.close()
 
     def _read_record(self, keep_payload: bool = False) -> Optional[TcpRecord]:
         while True:
@@ -238,6 +267,13 @@ class TcpReceiver:
             self._apply_record(record)
 
     def _apply_record(self, record: TcpRecord) -> None:
+        if self.recorder is not None:
+            self.recorder.add(
+                record.timestamp_ns,
+                time.time_ns(),
+                TCP_HDR_SIZE + record.payload_len,
+                record.event_id,
+            )
         if record.latency_flag == LATENCY_ENABLED:
             self.latency.enable()
         if self.latency.enabled:
@@ -410,6 +446,8 @@ def server(
     port: int,
     congestion_control: Optional[str] = None,
     trace_dir: Optional[str] = None,
+    record_path: Optional[str] = None,
+    record_metadata: Optional[dict] = None,
 ):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -442,9 +480,7 @@ def server(
         srv.close()
     _prepare_server_connection(conn, congestion_control)
 
-    receiver = TcpReceiver(
-        conn, log, bind_addr, port, addr
-    )
+    receiver = TcpReceiver(conn, log, bind_addr, port, addr)
     first = receiver.read_first_record()
     if receiver.stop_reason == "interrupted":
         receiver.summarize()
@@ -453,9 +489,15 @@ def server(
     action = classify_first_record(first)
 
     if action == ACTION_DATA:
+        if record_path is not None:
+            meta = dict(record_metadata or {})
+            if congestion_control is not None:
+                meta.setdefault("congestion_control", congestion_control)
+            receiver.recorder = Recorder(record_path, metadata=meta)
         receiver.begin(accept_ts)
         if first is not None:
             receiver.run(first=first)
+        receiver.close_recorder()
         receiver.summarize()
         conn.close()
         return
@@ -515,6 +557,8 @@ def client(
     enable_latency: bool = False,
     bind_dev: Optional[str] = None,
     reverse_config: Optional[ReverseConfig] = None,
+    record_path: Optional[str] = None,
+    record_metadata: Optional[dict] = None,
 ):
     sock = prepare_client_socket(
         log, host, port, congestion_control, set_mss, bind_dev=bind_dev
@@ -524,7 +568,10 @@ def client(
 
     log.start(host, port)
     if reverse_config is not None:
-        _run_tcp_reverse_receive(sock, log, host, port, reverse_config)
+        _run_tcp_reverse_receive(
+            sock, log, host, port, reverse_config, record_path=record_path,
+            record_metadata=record_metadata,
+        )
         return
 
     if controller is None:
@@ -540,6 +587,8 @@ def _run_tcp_reverse_receive(
     host: str,
     port: int,
     reverse_config: ReverseConfig,
+    record_path: Optional[str] = None,
+    record_metadata: Optional[dict] = None,
 ) -> None:
     err = write_tcp_record(
         sock, TCP_FLAG_REVERSE, pack_reverse_config(reverse_config)
@@ -560,46 +609,56 @@ def _run_tcp_reverse_receive(
     local = sock.getsockname()
     peer = sock.getpeername()
     receiver = TcpReceiver(
-        sock, log, local[0], local[1], peer
+        sock,
+        log,
+        local[0],
+        local[1],
+        peer,
+        record_path=record_path,
+        record_metadata=record_metadata,
     )
-    first = receiver.read_first_record()
-    action = classify_first_record(first)
-    if action == ACTION_ERROR:
-        message = unpack_error_message(b"" if first is None else first.payload)
-        log.summary(
-            direction="rx",
-            receiver=f"{host}:{port}",
-            seconds=0,
-            bytes=0,
-            bits_per_second=0,
-            stop_reason=message,
-        )
-        sock.close()
-        return
-    if first is None or action != ACTION_DATA:
-        log.summary(
-            direction="rx",
-            receiver=f"{host}:{port}",
-            seconds=0,
-            bytes=0,
-            bits_per_second=0,
-            stop_reason=(
-                receiver.stop_reason
-                if receiver.stop_reason == "interrupted"
-                else (
-                    "server closed before reverse test started"
-                    if first is None
-                    else f"unexpected first-packet action: {action}"
-                )
-            ),
-        )
-        sock.close()
-        return
+    try:
+        first = receiver.read_first_record()
+        action = classify_first_record(first)
+        if action == ACTION_ERROR:
+            message = unpack_error_message(
+                b"" if first is None else first.payload
+            )
+            log.summary(
+                direction="rx",
+                receiver=f"{host}:{port}",
+                seconds=0,
+                bytes=0,
+                bits_per_second=0,
+                stop_reason=message,
+            )
+            return
+        if first is None or action != ACTION_DATA:
+            log.summary(
+                direction="rx",
+                receiver=f"{host}:{port}",
+                seconds=0,
+                bytes=0,
+                bits_per_second=0,
+                stop_reason=(
+                    receiver.stop_reason
+                    if receiver.stop_reason == "interrupted"
+                    else (
+                        "server closed before reverse test started"
+                        if first is None
+                        else f"unexpected first-packet action: {action}"
+                    )
+                ),
+            )
+            return
 
-    receiver.begin()
-    receiver.run(first=first)
-    receiver.summarize()
-    sock.close()
+        receiver.begin()
+        receiver.run(first=first)
+        receiver.close_recorder()
+        receiver.summarize()
+    finally:
+        receiver.close_recorder()
+        sock.close()
 
 
 def _prepare_server_connection(

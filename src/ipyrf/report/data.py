@@ -11,7 +11,7 @@ REPORT_VERSION = 1
 
 @dataclass
 class PacketTrace:
-    """Columnar packet-record data (one list per CSV column)."""
+    """Columnar receive-record data (one list per CSV column)."""
 
     sequence: List[int]
     size_bytes: List[int]
@@ -19,6 +19,7 @@ class PacketTrace:
     received_ns: List[int]
     event_id: List[int]
     source: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.sequence)
@@ -155,6 +156,19 @@ class Summary:
     pattern_source: Optional[str] = None
     pattern_type: Optional[str] = None
     pattern_name: Optional[str] = None
+    protocol: Optional[str] = None
+    sequence_kind: Optional[str] = None
+    record_unit: Optional[str] = None
+    receiver: Optional[str] = None
+    sender: Optional[str] = None
+    reverse: bool = False
+    role: Optional[str] = None
+    bandwidth_bps: Optional[float] = None
+    configured_duration_s: Optional[float] = None
+    payload_len: Optional[int] = None
+    stop_reason: Optional[str] = None
+    congestion_control: Optional[str] = None
+    show_loss: bool = True
     warnings: List[str] = field(default_factory=list)
 
 
