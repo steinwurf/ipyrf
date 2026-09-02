@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from .clock_offset import OffsetError, run_offset
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
@@ -42,6 +43,26 @@ def parse_loops(value: str) -> int:
     if loops < 1:
         raise argparse.ArgumentTypeError("loops must be >= 1")
     return loops
+
+
+def parse_samples(value: str) -> int:
+    try:
+        samples = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from None
+    if samples < 1:
+        raise argparse.ArgumentTypeError("samples must be >= 1")
+    return samples
+
+
+def parse_interval(value: str) -> float:
+    try:
+        interval = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number: {value!r}") from None
+    if interval < 0:
+        raise argparse.ArgumentTypeError("interval must be >= 0")
+    return interval
 
 
 def _record_run_metadata(
@@ -123,6 +144,51 @@ def _main():
     )
 
     subp = p.add_subparsers(dest="protocol", required=True)
+
+    offset_parser = subp.add_parser(
+        "offset",
+        help="Measure clock offset to a remote host over SSH",
+    )
+    offset_parser.add_argument(
+        "host",
+        metavar="HOST",
+        help="SSH destination (e.g. user@hostname)",
+    )
+    offset_parser.add_argument(
+        "--samples",
+        type=parse_samples,
+        default=30,
+        metavar="N",
+        help="Number of offset samples (default: 30)",
+    )
+    offset_parser.add_argument(
+        "--interval",
+        type=parse_interval,
+        default=0.2,
+        metavar="SECONDS",
+        help="Delay between samples in seconds (default: 0.2)",
+    )
+    offset_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Write a JSON summary to stdout instead of a human-readable report",
+    )
+    offset_parser.add_argument(
+        "--python",
+        dest="remote_python",
+        default="python3",
+        metavar="CMD",
+        help="Python interpreter on the remote host (default: python3)",
+    )
+    offset_parser.add_argument(
+        "--ssh-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        dest="ssh_args",
+        help="Extra argument passed to ssh (repeatable)",
+    )
 
     gen_parser = subp.add_parser(
         "generate", help="Generate traffic-pattern JSON files"
@@ -398,6 +464,21 @@ def _main():
             p.error(str(e))
         if loops != 1:
             pattern = LoopedTrafficPattern(pattern, loops)
+
+    if args.protocol == "offset":
+        try:
+            run_offset(
+                args.host,
+                samples=args.samples,
+                interval_s=args.interval,
+                json_output=args.json_output,
+                ssh_args=args.ssh_args or (),
+                remote_python=args.remote_python,
+            )
+        except OffsetError as e:
+            print(f"error: {e}", file=sys.stderr)
+            raise SystemExit(2) from e
+        return
 
     if args.protocol == "generate":
         if args.generate_kind == "video":

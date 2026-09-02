@@ -6,6 +6,11 @@ every change, see the Git log.
 
 Latest
 ------
+* Minor: Added ``ipyrf offset HOST`` to measure clock offset between
+  this host and a remote machine over SSH. Useful for interpreting
+  one-way latency in ``--record`` CSVs.
+* Patch: ``ipyrf offset`` discards an untimed warmup round trip so SSH
+  handshake and host-key prompts are not counted as the first sample.
 * Patch: ``ipyrf-report`` HTML generation is much faster when a traffic
   pattern has many events.
 * Minor: Added ``ipyrf-report`` to generate a self-contained interactive

@@ -13,6 +13,7 @@ Features
 - Interactive HTML reports from ``--record`` CSVs (``ipyrf-report``)
 - Linux TCP congestion control selection (if available)
 - Client ``--bind-dev`` to transmit via a specific network interface (Linux)
+- Clock-offset measurement to a remote host over SSH (``ipyrf offset``)
 
 Installation
 ------------
@@ -123,6 +124,13 @@ UDP client (with bandwidth cap and optional payload size):
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --bind-dev eth0
    ipyrf udp client 127.0.0.1 --port 12345 --bandwidth 50M --time 5 --reverse
    ipyrf udp client 127.0.0.1 --port 12345 --traffic-pattern trace.json --reverse
+
+Clock offset (this host vs a remote SSH machine):
+
+.. code-block:: bash
+
+   ipyrf offset user@rasp1
+   ipyrf offset user@rasp1 --json
 
 Reverse mode
 ------------
@@ -275,6 +283,7 @@ Top-level structure:
 
    ipyrf [tcp|udp] [server|client] [OPTIONS]
    ipyrf generate video -o FILE [OPTIONS]
+   ipyrf offset HOST [OPTIONS]
    ipyrf-report RECORD [OPTIONS]
 
 Common options (both protocols, both roles):
@@ -341,6 +350,16 @@ Generate options:
 - ``--duration``: Synthetic length in seconds (default 10), or optional
   truncate when importing from ffprobe
 
+Offset options:
+
+- ``offset HOST``: Measure clock offset to ``HOST`` over SSH
+- ``--samples N``: Number of round-trip samples (default 30)
+- ``--interval SECONDS``: Delay between samples (default 0.2)
+- ``--json``: Write a JSON summary to stdout
+- ``--python CMD``: Python interpreter on the remote host (default
+  ``python3``)
+- ``--ssh-arg ARG``: Extra argument forwarded to ``ssh`` (repeatable)
+
 Report options (``ipyrf-report``):
 
 - ``RECORD``: Record CSV from ``--record``
@@ -369,7 +388,9 @@ the run (protocol, sequence kind, addresses, optional traffic pattern),
 then the header row and data (columns ``sequence``, ``size_bytes``,
 ``transmitted_ns``, ``received_ns``, ``event_id``).
 One-way latency in nanoseconds is ``received_ns - transmitted_ns``.
-``event_id`` is ``0`` unless the sender used ``--traffic-pattern``.
+That difference includes any clock offset between sender and receiver;
+use ``ipyrf offset`` to measure it. ``event_id`` is ``0`` unless the
+sender used ``--traffic-pattern``.
 ``ipyrf-report`` reads that metadata to label the run and to omit TCP
 loss/reorder charts. Pass ``--traffic-pattern`` to override an embedded
 pattern. Spreadsheet tools treat the ``#`` lines as extra rows; skip them
@@ -420,6 +441,33 @@ pass); they require the optional ``kaleido`` extra:
 .. code-block:: bash
 
    python3 -m pip install 'ipyrf[report-export]'
+
+Clock offset
+------------
+
+``ipyrf offset HOST`` measures the wall-clock offset between this machine
+and a remote SSH host. It does not change either clock. Each sample is a
+Cristian / NTP-style round trip: a newline is sent over SSH, the remote
+answers with ``time.time_ns()``, and the offset is ``remote - (t0 + t1) / 2``.
+A positive offset means the remote clock is ahead of this host. The
+reported offset is taken from the sample with the smallest RTT. The
+first SSH round trip is discarded so handshake, host-key prompts, and
+remote Python startup are not counted as a sample.
+
+This is useful when comparing ``transmitted_ns`` and ``received_ns`` in a
+``--record`` CSV from a two-host test. One-way latency is
+``received_ns - transmitted_ns``. If this host sent, subtract the
+offset; if the remote sent, add it.
+
+The remote host needs ``python3`` (or pass ``--python``). SSH uses your
+normal configuration and keys.
+
+.. code-block:: bash
+
+   ipyrf offset user@rasp1
+   ipyrf offset user@rasp1 --samples 50 --interval 0.1
+   ipyrf offset rasp1 --json
+   ipyrf offset rasp1 --ssh-arg=-p --ssh-arg=2222
 
 JSON logging
 ------------
