@@ -452,13 +452,7 @@ Clock offset
 ------------
 
 ``ipyrf offset HOST`` measures the wall-clock offset between this machine
-and a remote SSH host. It does not change either clock. Each sample is a
-Cristian / NTP-style round trip: a newline is sent over SSH, the remote
-answers with ``time.time_ns()``, and the offset is ``remote - (t0 + t1) / 2``.
-A positive offset means the remote clock is ahead of this host. The
-reported offset is taken from the sample with the smallest RTT. The
-first SSH round trip is discarded so handshake, host-key prompts, and
-remote Python startup are not counted as a sample.
+and a remote SSH host. It does not change either clock.
 
 This is useful when comparing ``transmitted_ns`` and ``received_ns`` in a
 ``--record`` CSV from a two-host test. One-way latency is

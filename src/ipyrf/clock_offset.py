@@ -1,10 +1,12 @@
 """Measure clock offset between this host and a remote machine over SSH.
 
-Each sample is a Cristian / NTP-style round trip: local send time ``t0``,
-the remote's ``time.time_ns()``, then local receive time ``t1``. Offset is
-``remote - (t0 + t1) // 2``; a positive value means the remote clock is
-ahead of this host. The reported offset comes from the sample with the
-smallest RTT, where the symmetric-delay assumption is strongest.
+Each sample is a round trip: local send time ``t0``, the remote's
+``time.time_ns()``, then local receive time ``t1``. Without assuming
+symmetric network delay, the true offset (remote minus local) must lie
+in ``[remote - t1, remote - t0]``. Intersecting those intervals across
+samples narrows the feasible range; the reported estimate is the
+midpoint and the uncertainty is half the remaining width. A positive
+offset means the remote clock is ahead of this host.
 """
 
 from __future__ import annotations
@@ -39,15 +41,23 @@ class OffsetSample:
     t1_ns: int
     remote_ns: int
     offset_ns: int
+    uncertainty_ns: int
+    lower_ns: int
+    upper_ns: int
     rtt_ns: int
 
     @classmethod
     def from_times(cls, t0_ns: int, t1_ns: int, remote_ns: int) -> "OffsetSample":
+        lower_ns = remote_ns - t1_ns
+        upper_ns = remote_ns - t0_ns
         return cls(
             t0_ns=t0_ns,
             t1_ns=t1_ns,
             remote_ns=remote_ns,
-            offset_ns=remote_ns - (t0_ns + t1_ns) // 2,
+            offset_ns=(lower_ns + upper_ns) // 2,
+            uncertainty_ns=(upper_ns - lower_ns) // 2,
+            lower_ns=lower_ns,
+            upper_ns=upper_ns,
             rtt_ns=t1_ns - t0_ns,
         )
 
@@ -60,7 +70,9 @@ class OffsetResult:
     host: str
     samples: List[OffsetSample]
     offset_ns: int
-    median_offset_ns: int
+    uncertainty_ns: int
+    lower_ns: int
+    upper_ns: int
     min_rtt_ns: int
     mean_rtt_ns: int
 
@@ -69,7 +81,9 @@ class OffsetResult:
             "host": self.host,
             "samples": [s.to_dict() for s in self.samples],
             "offset_ns": self.offset_ns,
-            "median_offset_ns": self.median_offset_ns,
+            "uncertainty_ns": self.uncertainty_ns,
+            "lower_ns": self.lower_ns,
+            "upper_ns": self.upper_ns,
             "min_rtt_ns": self.min_rtt_ns,
             "mean_rtt_ns": self.mean_rtt_ns,
         }
@@ -89,15 +103,22 @@ def ssh_probe_command(
 def summarize(host: str, samples: Sequence[OffsetSample]) -> OffsetResult:
     if not samples:
         raise OffsetError("no samples collected")
-    best = min(samples, key=lambda s: s.rtt_ns)
-    offsets = [s.offset_ns for s in samples]
+    lower_ns = max(s.lower_ns for s in samples)
+    upper_ns = min(s.upper_ns for s in samples)
+    if lower_ns > upper_ns:
+        raise OffsetError(
+            "offset intervals have no overlap; clocks may have drifted "
+            "during sampling or a sample was inconsistent"
+        )
     rtts = [s.rtt_ns for s in samples]
     return OffsetResult(
         host=host,
         samples=list(samples),
-        offset_ns=best.offset_ns,
-        median_offset_ns=int(round(statistics.median(offsets))),
-        min_rtt_ns=best.rtt_ns,
+        offset_ns=(lower_ns + upper_ns) // 2,
+        uncertainty_ns=(upper_ns - lower_ns) // 2,
+        lower_ns=lower_ns,
+        upper_ns=upper_ns,
+        min_rtt_ns=min(rtts),
         mean_rtt_ns=int(round(statistics.mean(rtts))),
     )
 
@@ -195,7 +216,8 @@ def measure_clock_offset(
 
 def format_sample(sample: OffsetSample) -> str:
     return (
-        f"offset: {sample.offset_ns / 1e6:+9.3f} ms   "
+        f"offset: {sample.offset_ns / 1e6:+9.3f} ± "
+        f"{sample.uncertainty_ns / 1e6:6.3f} ms   "
         f"RTT: {sample.rtt_ns / 1e6:8.3f} ms"
     )
 
@@ -203,13 +225,17 @@ def format_sample(sample: OffsetSample) -> str:
 def format_summary(result: OffsetResult) -> str:
     return (
         f"\n"
-        f"host:     {result.host}\n"
-        f"offset:   {result.offset_ns / 1e6:+9.3f} ms  (min-RTT sample)\n"
-        f"median:   {result.median_offset_ns / 1e6:+9.3f} ms\n"
-        f"min RTT:  {result.min_rtt_ns / 1e6:9.3f} ms\n"
-        f"mean RTT: {result.mean_rtt_ns / 1e6:9.3f} ms\n"
+        f"host:         {result.host}\n"
+        f"offset:       {result.offset_ns / 1e6:+9.3f} ± "
+        f"{result.uncertainty_ns / 1e6:.3f} ms\n"
+        f"range:        [{result.lower_ns / 1e6:+.3f}, "
+        f"{result.upper_ns / 1e6:+.3f}] ms\n"
+        f"min RTT:      {result.min_rtt_ns / 1e6:9.3f} ms\n"
+        f"mean RTT:     {result.mean_rtt_ns / 1e6:9.3f} ms\n"
         f"\n"
         f"Positive offset means the remote clock is ahead of this host.\n"
+        f"Uncertainty is half the feasible offset range after intersecting\n"
+        f"all samples (no symmetric-delay assumption).\n"
     )
 
 

@@ -39,35 +39,48 @@ def _stop(proc):
         proc.wait(timeout=2)
 
 
-def test_offset_from_times_uses_midpoint():
+def test_offset_from_times_uses_feasible_interval():
     sample = OffsetSample.from_times(
         t0_ns=1_000_000_000,
         t1_ns=1_002_000_000,
         remote_ns=1_001_500_000,
     )
     assert sample.rtt_ns == 2_000_000
-    # remote - (t0 + t1) // 2 = 1_001_500_000 - 1_001_000_000
+    # Offset must lie in [remote - t1, remote - t0].
+    assert sample.lower_ns == -500_000
+    assert sample.upper_ns == 1_500_000
     assert sample.offset_ns == 500_000
+    assert sample.uncertainty_ns == 1_000_000
 
 
-def test_summarize_uses_min_rtt_sample():
+def test_summarize_intersects_sample_intervals():
     samples = [
-        OffsetSample.from_times(0, 10_000_000, 100_000_000),
-        OffsetSample.from_times(0, 2_000_000, 51_000_000),
-        OffsetSample.from_times(0, 8_000_000, 80_000_000),
+        OffsetSample.from_times(0, 10_000_000, 100_000_000),  # [90e6, 100e6]
+        OffsetSample.from_times(0, 4_000_000, 95_000_000),  # [91e6, 95e6]
+        OffsetSample.from_times(0, 8_000_000, 98_000_000),  # [90e6, 98e6]
     ]
     result = summarize("user@host", samples)
     assert result.host == "user@host"
-    assert result.min_rtt_ns == 2_000_000
-    assert result.offset_ns == samples[1].offset_ns
-    assert result.mean_rtt_ns == int(round((10_000_000 + 2_000_000 + 8_000_000) / 3))
-    offsets = sorted(s.offset_ns for s in samples)
-    assert result.median_offset_ns == offsets[1]
+    assert result.lower_ns == 91_000_000
+    assert result.upper_ns == 95_000_000
+    assert result.offset_ns == 93_000_000
+    assert result.uncertainty_ns == 2_000_000
+    assert result.min_rtt_ns == 4_000_000
+    assert result.mean_rtt_ns == int(round((10_000_000 + 4_000_000 + 8_000_000) / 3))
 
 
 def test_summarize_rejects_empty():
     with pytest.raises(OffsetError, match="no samples"):
         summarize("host", [])
+
+
+def test_summarize_rejects_non_overlapping_intervals():
+    samples = [
+        OffsetSample.from_times(0, 2_000_000, 10_000_000),  # [8e6, 10e6]
+        OffsetSample.from_times(0, 2_000_000, 20_000_000),  # [18e6, 20e6]
+    ]
+    with pytest.raises(OffsetError, match="no overlap"):
+        summarize("host", samples)
 
 
 def test_ssh_probe_command_layout():
@@ -209,8 +222,10 @@ def test_run_offset_human_and_json():
     )
     text = human.getvalue()
     assert "offset:" in text
-    assert "host:     local" in text
+    assert "±" in text
+    assert "host:         local" in text
     assert "Positive offset" in text
+    assert "symmetric-delay" in text
     assert format_sample(result.samples[0]) in text
     assert "Connecting to" not in text
 
@@ -227,7 +242,10 @@ def test_run_offset_human_and_json():
     assert payload["host"] == "local"
     assert len(payload["samples"]) == 2
     assert payload["offset_ns"] == json_result.offset_ns
+    assert payload["uncertainty_ns"] == json_result.uncertainty_ns
+    assert "lower_ns" in payload
     assert "t0_ns" in payload["samples"][0]
+    assert "uncertainty_ns" in payload["samples"][0]
 
 
 def test_parse_samples_and_interval():
