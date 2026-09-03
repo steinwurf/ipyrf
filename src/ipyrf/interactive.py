@@ -8,7 +8,7 @@ import termios
 import fcntl
 import select
 
-from .utils import human_bps
+from .utils import human_bps, sleep_precise
 from .pacer import Pacer
 from .controllers import BasePacingController
 
@@ -132,15 +132,7 @@ class InteractiveController(BasePacingController):
         if tb is None:
             return
         sleep_time = tb.take(n_bytes + self.header_overhead)
-        if sleep_time <= 0:
-            return
-        if sleep_time > 0.5:
-            self.stop_event.wait(sleep_time)
-        else:
-            # Busy wait for very short sleeps
-            end = time.perf_counter() + sleep_time
-            while time.perf_counter() < end and not self.stop_event.is_set():
-                pass
+        sleep_precise(sleep_time, self.stop_event)
 
     def get_update_fields(self):
         with self.lock:

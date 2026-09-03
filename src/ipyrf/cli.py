@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 import argparse
+import json
 import sys
 from pathlib import Path
 
+from .clock_offset import OffsetError, run_offset
 from .logger import Logger
 from .utils import parse_bandwidth, parse_ip, tcp_congestion_control_info
 from . import tcp, udp
@@ -43,6 +45,70 @@ def parse_loops(value: str) -> int:
     return loops
 
 
+def parse_samples(value: str) -> int:
+    try:
+        samples = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from None
+    if samples < 1:
+        raise argparse.ArgumentTypeError("samples must be >= 1")
+    return samples
+
+
+def parse_interval(value: str) -> float:
+    try:
+        interval = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number: {value!r}") from None
+    if interval < 0:
+        raise argparse.ArgumentTypeError("interval must be >= 0")
+    return interval
+
+
+def _record_run_metadata(
+    args,
+    *,
+    reverse: bool,
+    reverse_trace_name,
+    loops: int,
+    pattern_path,
+) -> dict:
+    meta = {
+        "protocol": args.protocol,
+        "role": args.role,
+        "reverse": bool(reverse),
+        "sequence": "sender" if args.protocol == "udp" else "receive_order",
+        "record_unit": "datagram" if args.protocol == "udp" else "tcp_record",
+        "direction": "rx",
+    }
+    if reverse:
+        if getattr(args, "bandwidth", None) is not None:
+            meta["bandwidth_bps"] = args.bandwidth
+        if pattern_path is None and getattr(args, "time", None) is not None:
+            meta["duration_s"] = float(args.time)
+        if loops != 1:
+            meta["loops"] = loops
+        if reverse_trace_name:
+            meta["traffic_pattern_name"] = reverse_trace_name
+        if pattern_path:
+            try:
+                with open(pattern_path, encoding="utf-8") as f:
+                    meta["traffic_pattern"] = json.load(f)
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
+        if args.protocol == "udp" and getattr(args, "length", None) is not None:
+            meta["payload_len"] = args.length
+        if args.protocol == "tcp":
+            if getattr(args, "congestion_control", None):
+                meta["congestion_control"] = args.congestion_control
+            if getattr(args, "set_mss", None):
+                meta["mss"] = args.set_mss
+    elif args.role == "server" and args.protocol == "tcp":
+        if getattr(args, "congestion_control", None):
+            meta["congestion_control"] = args.congestion_control
+    return meta
+
+
 def main():
     try:
         _main()
@@ -64,8 +130,65 @@ def _main():
         action="store_true",
         default=False,
     )
+    common.add_argument(
+        "--record",
+        metavar="PATH",
+        dest="record_path",
+        help="Write received records to a CSV file after the test",
+    )
+    common.add_argument(
+        "--packet-record",
+        dest="record_path",
+        metavar="PATH",
+        help=argparse.SUPPRESS,
+    )
 
     subp = p.add_subparsers(dest="protocol", required=True)
+
+    offset_parser = subp.add_parser(
+        "offset",
+        help="Measure clock offset to a remote host over SSH",
+    )
+    offset_parser.add_argument(
+        "host",
+        metavar="HOST",
+        help="SSH destination (e.g. user@hostname)",
+    )
+    offset_parser.add_argument(
+        "--samples",
+        type=parse_samples,
+        default=30,
+        metavar="N",
+        help="Number of offset samples (default: 30)",
+    )
+    offset_parser.add_argument(
+        "--interval",
+        type=parse_interval,
+        default=0.2,
+        metavar="SECONDS",
+        help="Delay between samples in seconds (default: 0.2)",
+    )
+    offset_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Write a JSON summary to stdout instead of a human-readable report",
+    )
+    offset_parser.add_argument(
+        "--python",
+        dest="remote_python",
+        default="python3",
+        metavar="CMD",
+        help="Python interpreter on the remote host (default: python3)",
+    )
+    offset_parser.add_argument(
+        "--ssh-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        dest="ssh_args",
+        help="Extra argument passed to ssh (repeatable)",
+    )
 
     gen_parser = subp.add_parser(
         "generate", help="Generate traffic-pattern JSON files"
@@ -244,14 +367,11 @@ def _main():
     udp_parser = subp.add_parser("udp", help="UDP mode")
     udp_sub = udp_parser.add_subparsers(dest="role", required=True)
 
-    udp_srv = udp_sub.add_parser("server", parents=[common], help="Run a UDP server")
-    udp_srv.add_argument(
-        "address", metavar="ADDRESS", type=parse_ip, help="Listen address"
+    udp_srv = udp_sub.add_parser(
+        "server", parents=[common], help="Run a UDP server"
     )
     udp_srv.add_argument(
-        "--packet-record",
-        metavar="PATH",
-        help="Write received UDP packet traces to a CSV file after the test",
+        "address", metavar="ADDRESS", type=parse_ip, help="Listen address"
     )
     udp_srv.add_argument(
         "--inactivity-timeout",
@@ -270,7 +390,9 @@ def _main():
         ),
     )
 
-    udp_cli = udp_sub.add_parser("client", parents=[common], help="Run a UDP client")
+    udp_cli = udp_sub.add_parser(
+        "client", parents=[common], help="Run a UDP client"
+    )
     udp_cli.add_argument("address", metavar="ADDRESS", help="Server address to connect")
     udp_cli.add_argument(
         "--bandwidth", type=parse_bandwidth, help="Target bandwidth, e.g., 50M"
@@ -343,6 +465,21 @@ def _main():
         if loops != 1:
             pattern = LoopedTrafficPattern(pattern, loops)
 
+    if args.protocol == "offset":
+        try:
+            run_offset(
+                args.host,
+                samples=args.samples,
+                interval_s=args.interval,
+                json_output=args.json_output,
+                ssh_args=args.ssh_args or (),
+                remote_python=args.remote_python,
+            )
+        except OffsetError as e:
+            print(f"error: {e}", file=sys.stderr)
+            raise SystemExit(2) from e
+        return
+
     if args.protocol == "generate":
         if args.generate_kind == "video":
             try:
@@ -392,12 +529,29 @@ def _main():
     if reverse and getattr(args, "interactive", False):
         p.error("--reverse cannot be combined with --interactive")
 
+    record_path = getattr(args, "record_path", None)
+    if record_path is not None and args.role == "client" and not reverse:
+        p.error(
+            "--record is only used when receiving "
+            "(pass it to the server, or combine with --reverse)"
+        )
+
     reverse_trace_name = None
     if reverse and pattern_path is not None:
         try:
             reverse_trace_name = reverse_trace_file_name(pattern_path)
         except ValueError as e:
             p.error(str(e))
+
+    record_metadata = None
+    if record_path is not None:
+        record_metadata = _record_run_metadata(
+            args,
+            reverse=reverse,
+            reverse_trace_name=reverse_trace_name,
+            loops=loops,
+            pattern_path=pattern_path,
+        )
 
     log = Logger(
         args.json_log,
@@ -413,9 +567,10 @@ def _main():
                 log,
                 args.address,
                 args.port,
-                packet_record_path=args.packet_record,
+                record_path=record_path,
                 inactivity_timeout=args.inactivity_timeout,
                 trace_dir=args.trace_dir,
+                record_metadata=record_metadata,
             )
         else:
             if reverse:
@@ -434,6 +589,8 @@ def _main():
                         loops=loops,
                     ),
                     bind_dev=args.bind_dev,
+                    record_path=record_path,
+                    record_metadata=record_metadata,
                 )
             else:
                 if pattern is not None:
@@ -469,6 +626,8 @@ def _main():
                 args.port,
                 congestion_control=args.congestion_control,
                 trace_dir=args.trace_dir,
+                record_path=record_path,
+                record_metadata=record_metadata,
             )
         else:
             if reverse:
@@ -487,6 +646,8 @@ def _main():
                         loops=loops,
                     ),
                     bind_dev=args.bind_dev,
+                    record_path=record_path,
+                    record_metadata=record_metadata,
                 )
             else:
                 # TCP record header is sent in addition to the payload returned by

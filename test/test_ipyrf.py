@@ -3,9 +3,10 @@ import dummynet
 import logging
 import os
 import csv
+import io
 import json
 
-from ipyrf.packet_recorder import CSV_COLUMNS
+from ipyrf.recorder import CSV_COLUMNS, parse_record_text
 
 log = logging.getLogger(__name__)
 
@@ -139,14 +140,14 @@ def test_ipyrf_udp_basic_loopback(ipyrf, free_port):
     )
 
 
-def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
+def test_ipyrf_udp_record_cli(ipyrf, testdirectory, free_port):
 
-    csv_path = os.path.join(testdirectory.path(), "packets.csv")
+    csv_path = os.path.join(testdirectory.path(), "records.csv")
 
     server = ipyrf.build()
     client = ipyrf.build()
 
-    server.run_udp_server("127.0.0.1", free_port, packet_record=csv_path)
+    server.run_udp_server("127.0.0.1", free_port, record=csv_path)
     client.run_udp_client("127.0.0.1", free_port, duration=2, bandwidth="10M")
 
     ipyrf.check(
@@ -158,17 +159,45 @@ def test_ipyrf_udp_packet_record_cli(ipyrf, testdirectory, free_port):
     )
 
     summary = server.wait_for_summary(timeout=5)
-    assert "packet_record_count" in summary
-    assert summary["packet_record_count"] == summary["packets"]
-    assert summary["packet_record_dropped"] == 0
-    assert summary["packet_record_count"] > 0
+    assert "record_count" in summary
+    assert summary["record_count"] == summary["packets"]
+    assert summary["record_dropped"] == 0
+    assert summary["record_count"] > 0
 
-    with open(csv_path, newline="") as f:
-        rows = list(csv.DictReader(f))
+    meta, csv_text = parse_record_text(open(csv_path, encoding="utf-8").read())
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
     assert list(rows[0].keys()) == list(CSV_COLUMNS)
-    assert len(rows) == summary["packet_record_count"]
+    assert len(rows) == summary["record_count"]
     assert int(rows[0]["received_ns"]) >= int(rows[0]["transmitted_ns"])
     assert int(rows[0]["size_bytes"]) > 0
+    assert meta["protocol"] == "udp"
+
+
+def test_ipyrf_tcp_record_cli(ipyrf, testdirectory, free_port):
+
+    csv_path = os.path.join(testdirectory.path(), "records.csv")
+
+    server = ipyrf.build()
+    client = ipyrf.build()
+
+    server.run_tcp_server("127.0.0.1", free_port, record=csv_path)
+    client.run_tcp_client("127.0.0.1", free_port, duration=2, bandwidth="10M")
+
+    ipyrf.check((server, client), timeout=5)
+
+    summary = server.wait_for_summary(timeout=5)
+    assert "record_count" in summary
+    assert summary["record_dropped"] == 0
+    assert summary["record_count"] > 0
+
+    meta, csv_text = parse_record_text(open(csv_path, encoding="utf-8").read())
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert list(rows[0].keys()) == list(CSV_COLUMNS)
+    assert len(rows) == summary["record_count"]
+    assert [int(r["sequence"]) for r in rows] == list(range(1, len(rows) + 1))
+    assert int(rows[0]["received_ns"]) >= int(rows[0]["transmitted_ns"])
+    assert int(rows[0]["size_bytes"]) > 0
+    assert meta["protocol"] == "tcp"
 
 
 def test_ipyrf_run_failed(ipyrf):
@@ -252,7 +281,8 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
 
         test_duration = 5
         delay = 50
-        limit = 1000
+        # netem limit is queued packets, not Mbit/s
+        limit = 65535
         log.info("Testing without rate limiting")
 
         # We set a limit regardless to but set it very high, this is to
@@ -268,12 +298,12 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
         ipyrf_client.run_tcp_client("10.0.0.2", port, duration=test_duration)
         summary = ipyrf_client.wait_for_summary(timeout=test_duration + 5)
 
-        mbits_per_second_without_limit = summary["bits_per_second"] // 1000000
+        mbits_per_second_without_limit = summary["bits_per_second"] / 1e6
         log.info(
             f"Bits per second without limit: {mbits_per_second_without_limit} Mbps"
         )
 
-        rate = mbits_per_second_without_limit // 2  # Half the speed
+        rate = mbits_per_second_without_limit / 2  # Half the speed
         log.info(f"Testing with rate limiting to {rate} Mbit/s")
 
         # Let's rate limit the interfaces
@@ -287,7 +317,7 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
         ipyrf_client.run_tcp_client("10.0.0.2", port, duration=test_duration)
         summary = ipyrf_client.wait_for_summary(timeout=test_duration + 5)
 
-        mbits_per_second_with_limit = summary["bits_per_second"] // 1000000
+        mbits_per_second_with_limit = summary["bits_per_second"] / 1e6
         log.info(f"Bits per second with limit: {mbits_per_second_with_limit} Mbps")
 
         assert mbits_per_second_with_limit < mbits_per_second_without_limit

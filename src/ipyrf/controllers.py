@@ -6,7 +6,7 @@ from typing import Dict, Optional, Union
 from .handshake import ReverseConfig, resolve_trace_file
 from .pacer import Pacer
 from .traffic_pattern import LoopedTrafficPattern, TrafficPattern, load_traffic_pattern
-from .utils import sleep_until_ns
+from .utils import sleep_until_ns, sleep_precise
 
 _NS_PER_SECOND = 1_000_000_000
 
@@ -92,15 +92,7 @@ class StaticPacingController(BasePacingController):
         if self.tb is None:
             return
         sleep_time = self.tb.take(n_bytes + self.header_overhead)
-        if sleep_time <= 0:
-            return
-        if sleep_time > 0.5:
-            time.sleep(sleep_time)
-        else:
-            # Busy wait for very short sleeps
-            end = time.perf_counter() + sleep_time
-            while time.perf_counter() < end:
-                pass
+        sleep_precise(sleep_time)
 
     def get_update_fields(self) -> Dict[str, float]:
         if self.bandwidth_bps is None:

@@ -4,23 +4,47 @@ import pathlib
 import socket
 import time
 
-def sleep_precise(sleep_time_s: float) -> None:
+# Spin for the last slice of a deadline wait so time.sleep overshoot is small.
+_SLEEP_UNTIL_SPIN_NS = 500_000
+
+
+def sleep_precise(sleep_time_s: float, stop_event=None) -> None:
+    """Sleep ``sleep_time_s`` seconds.
+
+    Intervals longer than 0.5s use a blocking sleep. Shorter intervals busy-wait
+    so packet pacing stays accurate. ``stop_event`` (a ``threading.Event``) can
+    interrupt either path.
+    """
     if sleep_time_s <= 0:
         return
     if sleep_time_s > 0.5:
-        time.sleep(sleep_time_s)
-    else:
-        # Busy wait for very short sleeps
-        end = time.perf_counter() + sleep_time_s
-        while time.perf_counter() < end:
-            pass
+        if stop_event is None:
+            time.sleep(sleep_time_s)
+        else:
+            stop_event.wait(sleep_time_s)
+        return
+    end = time.perf_counter() + sleep_time_s
+    while time.perf_counter() < end:
+        if stop_event is not None and stop_event.is_set():
+            return
+
 
 def sleep_until_ns(deadline_ns: int) -> None:
-    now_ns = time.monotonic_ns()
-    remaining_ns = deadline_ns - now_ns
-    if remaining_ns <= 0:
+    """Sleep until a ``time.monotonic_ns`` deadline.
+
+    Sleeps for most of the remaining time, then busy-waits on the same clock
+    for the last ``_SLEEP_UNTIL_SPIN_NS`` so short event gaps stay on schedule.
+    """
+    while True:
+        remaining_ns = deadline_ns - time.monotonic_ns()
+        if remaining_ns <= 0:
+            return
+        if remaining_ns > _SLEEP_UNTIL_SPIN_NS:
+            time.sleep((remaining_ns - _SLEEP_UNTIL_SPIN_NS) / 1_000_000_000)
+            continue
+        while time.monotonic_ns() < deadline_ns:
+            pass
         return
-    sleep_precise(remaining_ns / 1_000_000_000)
 
 
 def tcp_congestion_control_info():
