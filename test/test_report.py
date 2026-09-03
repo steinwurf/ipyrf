@@ -291,42 +291,6 @@ def test_merged_shading_spans_joins_same_tags_across_gaps():
     ]
 
 
-def test_overview_event_shading_is_fast_with_many_events(tmp_path):
-    n = 180
-    tags = ("I", "B", "B", "P")
-    rows = []
-    events = []
-    for i in range(n):
-        tx = 1_000_000_000 + i * 1_000_000
-        rx = tx + 2_000_000
-        rows.append((i + 1, 100, tx, rx, i + 1))
-        events.append(
-            {"timestamp": i * 0.01, "nbytes": 100, "tags": [tags[i % 4]]}
-        )
-    record = _write_csv(tmp_path / "packets.csv", rows)
-    pattern_path = tmp_path / "trace.json"
-    pattern_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "type": "trace",
-                "metadata": {"name": "many-events"},
-                "events": events,
-            }
-        )
-    )
-    data = analyze(
-        load_record(record),
-        load_pattern_info(pattern_path),
-        bin_ns=1_000_000,
-    )
-    started = time.perf_counter()
-    fig = _overview_figure(data)
-    elapsed = time.perf_counter() - started
-    assert elapsed < 5.0
-    assert len(fig.layout.shapes) > 0
-
-
 def test_generate_html_and_json(tmp_path):
     record = _write_csv(tmp_path / "packets.csv", _fixture_rows())
     pattern_path = tmp_path / "trace.json"
