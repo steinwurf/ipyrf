@@ -132,7 +132,7 @@ class InteractiveController(BasePacingController):
         if tb is None:
             return
         sleep_time = tb.take(n_bytes + self.header_overhead)
-        sleep_precise(sleep_time)
+        sleep_precise(sleep_time, self.stop_event)
 
     def get_update_fields(self):
         with self.lock:

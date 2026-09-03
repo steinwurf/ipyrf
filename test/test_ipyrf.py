@@ -281,7 +281,8 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
 
         test_duration = 5
         delay = 50
-        limit = 1000
+        # netem limit is queued packets, not Mbit/s
+        limit = 65535
         log.info("Testing without rate limiting")
 
         # We set a limit regardless to but set it very high, this is to
@@ -297,12 +298,12 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
         ipyrf_client.run_tcp_client("10.0.0.2", port, duration=test_duration)
         summary = ipyrf_client.wait_for_summary(timeout=test_duration + 5)
 
-        mbits_per_second_without_limit = summary["bits_per_second"] // 1000000
+        mbits_per_second_without_limit = summary["bits_per_second"] / 1e6
         log.info(
             f"Bits per second without limit: {mbits_per_second_without_limit} Mbps"
         )
 
-        rate = mbits_per_second_without_limit // 2  # Half the speed
+        rate = mbits_per_second_without_limit / 2  # Half the speed
         log.info(f"Testing with rate limiting to {rate} Mbit/s")
 
         # Let's rate limit the interfaces
@@ -316,7 +317,7 @@ def test_ipyrf_tcp_bandwidth(ipyrf, free_port_func):
         ipyrf_client.run_tcp_client("10.0.0.2", port, duration=test_duration)
         summary = ipyrf_client.wait_for_summary(timeout=test_duration + 5)
 
-        mbits_per_second_with_limit = summary["bits_per_second"] // 1000000
+        mbits_per_second_with_limit = summary["bits_per_second"] / 1e6
         log.info(f"Bits per second with limit: {mbits_per_second_with_limit} Mbps")
 
         assert mbits_per_second_with_limit < mbits_per_second_without_limit

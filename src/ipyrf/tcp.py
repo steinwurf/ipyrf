@@ -398,6 +398,9 @@ class TcpSender:
             self.stop_reason = "interrupted"
 
     def finish(self) -> None:
+        # Duration is send time only. Waiting for the peer to close can add
+        # up to the recv timeout and would under-report bits_per_second.
+        send_end = time.time()
         try:
             self.sock.shutdown(socket.SHUT_WR)
         except Exception:
@@ -410,7 +413,7 @@ class TcpSender:
         except (Exception, KeyboardInterrupt):
             pass
         self.sock.close()
-        actual_duration = max(1e-9, time.time() - self.start)
+        actual_duration = max(1e-9, send_end - self.start)
         self.log.summary(
             direction="tx",
             receiver=f"{self.host}:{self.port}",
@@ -621,7 +624,7 @@ def _run_tcp_reverse_receive(
         first = receiver.read_first_record()
         action = classify_first_record(first)
         if action == ACTION_ERROR:
-            message = unpack_error_message(
+            receiver.stop_reason = unpack_error_message(
                 b"" if first is None else first.payload
             )
             log.summary(
@@ -630,7 +633,7 @@ def _run_tcp_reverse_receive(
                 seconds=0,
                 bytes=0,
                 bits_per_second=0,
-                stop_reason=message,
+                stop_reason=receiver.stop_reason,
             )
             return
         if first is None or action != ACTION_DATA:
@@ -654,7 +657,6 @@ def _run_tcp_reverse_receive(
 
         receiver.begin()
         receiver.run(first=first)
-        receiver.close_recorder()
         receiver.summarize()
     finally:
         receiver.close_recorder()

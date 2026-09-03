@@ -11,15 +11,18 @@ class Pacer:
         """
         Return how many seconds to sleep before sending `n_bytes`
         to maintain `rate_bps`. 0.0 means go now.
+
+        The first send (and a send that is already late) is eligible
+        immediately. Each take then schedules the next slot one chunk-cost
+        after the current one, without charging that cost twice.
         """
         now = time.monotonic()
         bytes_per_second = self.bandwidth_bps / 8.0  # bits/s → bytes/s
         if self.next_eligible is None or now > self.next_eligible:
-            # No accumulated credit: start from now
-            self.next_eligible = now + n_bytes / bytes_per_second
+            # No credit to catch up: start from now (send immediately).
+            self.next_eligible = now
 
         wait = max(0.0, self.next_eligible - now)
-        # Schedule the next slot spaced by the time this chunk 'costs'
         self.next_eligible += n_bytes / bytes_per_second
 
         return wait
