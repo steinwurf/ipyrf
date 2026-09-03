@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+2.1.0
+-----
 * Minor: Added ``ipyrf offset HOST`` to measure clock offset between
   this host and a remote machine over SSH. Useful for interpreting
   one-way latency in ``--record`` CSVs.
