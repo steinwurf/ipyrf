@@ -371,7 +371,7 @@ Report options (``ipyrf-report``):
 - ``--title TITLE``: Report title
 - ``--clock-offset MS``: Add this many milliseconds to one-way latency
   (value from ``ipyrf offset`` run on the receiving host against the
-  sender). The HTML report can also change this after generation
+  sender)
 
 Receive recording
 -----------------
@@ -424,8 +424,7 @@ comment) and writes one self-contained interactive HTML file (Plotly.js is
 embedded, so the file works offline). Pass ``--traffic-pattern`` to override
 a pattern embedded in the record metadata; otherwise the report uses the
 embedded pattern when present. Pass ``--clock-offset MS`` to add that many
-milliseconds to one-way latency (the HTML header also has a clock-offset
-field you can edit later without regenerating).
+milliseconds to one-way latency when the report is generated.
 
 The report is laid out like a performance trace: KPI overview at the top,
 then throughput, latency (p50 / p95 / p99), loss and sequence / reordering
@@ -458,9 +457,9 @@ This is useful when comparing ``transmitted_ns`` and ``received_ns`` in a
 ``--record`` CSV from a two-host test. One-way latency is
 ``received_ns - transmitted_ns``. If you run ``ipyrf offset`` on the
 receiving host against the sender, pass that value to
-``ipyrf-report --clock-offset`` (or type it into the HTML report). That
-adds the offset so latency is in the receiver's time base. If this host
-sent and the remote recorded, negate the printed offset first.
+``ipyrf-report --clock-offset``. That adds the offset so latency is in
+the receiver's time base. If this host sent and the remote recorded,
+negate the printed offset first.
 
 The remote host needs ``python3`` (or pass ``--python``). SSH uses your
 normal configuration and keys.

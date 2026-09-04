@@ -15,7 +15,7 @@ from ipyrf.report import (
     load_record,
     load_pattern_info,
 )
-from ipyrf.report.data import EventSpan
+from ipyrf.report.data import CLOCK_UNSYNCED_WARNING, EventSpan
 from ipyrf.report.export import write_images
 from ipyrf.report.html import _default_title, _intro_html, _kpi_cards
 from ipyrf.report.loader import pattern_from_record_metadata
@@ -46,6 +46,22 @@ def _fixture_rows():
         rows.append((seq, 1000, tx, rx, event_id))
     rows.sort(key=lambda r: r[3])
     return rows
+
+
+def _record_with_latency_flag(path: Path, enabled: bool) -> Path:
+    with Recorder(
+        path,
+        metadata={
+            "protocol": "udp",
+            "sequence": "sender",
+            "latency_enabled": enabled,
+        },
+        records_per_chunk=2,
+        num_chunks=2,
+    ) as recorder:
+        recorder.add(1_000_000_000, 1_002_000_000, 64, seq=1)
+        recorder.add(1_003_000_000, 1_005_000_000, 64, seq=2)
+    return path
 
 
 def test_loader_reads_csv(tmp_path):
@@ -222,6 +238,45 @@ def test_analyze_clock_offset_shifts_latency(tmp_path):
         )
 
 
+def test_analyze_warns_when_latency_not_enabled(tmp_path):
+    data = analyze(
+        load_record(_record_with_latency_flag(tmp_path / "off.csv", False)),
+        bin_ns=1_000_000,
+    )
+    assert data.summary.latency_enabled is False
+    assert CLOCK_UNSYNCED_WARNING in data.summary.warnings
+    assert data.summary.latency_p50_ms is not None
+
+
+def test_analyze_no_clock_warning_when_latency_enabled(tmp_path):
+    data = analyze(
+        load_record(_record_with_latency_flag(tmp_path / "on.csv", True)),
+        bin_ns=1_000_000,
+    )
+    assert data.summary.latency_enabled is True
+    assert CLOCK_UNSYNCED_WARNING not in data.summary.warnings
+
+
+def test_html_warns_when_latency_not_enabled(tmp_path):
+    record = _record_with_latency_flag(tmp_path / "off.csv", False)
+    html_path = tmp_path / "report.html"
+    generate_report(record, html_path)
+    html = html_path.read_text(encoding="utf-8")
+    assert CLOCK_UNSYNCED_WARNING in html
+    assert html.count(CLOCK_UNSYNCED_WARNING) == 1
+    assert 'class="warnings"' in html
+    assert 'id="latency_distribution"' in html
+    assert 'id="overview"' in html
+    enabled = generate_report(
+        _record_with_latency_flag(tmp_path / "on.csv", True),
+        tmp_path / "enabled.html",
+    )
+    enabled_html = (tmp_path / "enabled.html").read_text(encoding="utf-8")
+    assert enabled.summary.latency_enabled is True
+    assert CLOCK_UNSYNCED_WARNING not in enabled_html
+    assert 'id="latency_distribution"' in enabled_html
+
+
 def test_analyze_event_stats_with_pattern(tmp_path):
     path = _write_csv(tmp_path / "packets.csv", _fixture_rows())
     pattern_path = tmp_path / "trace.json"
@@ -321,12 +376,10 @@ def test_generate_html_and_json(tmp_path):
     assert "Fixture" in html
     assert "Throughput" in html
     assert "Latency" in html
-    assert 'id="clock-offset-ms"' in html
-    assert 'data-baked="1.25"' in html
-    assert "data-latency-ms=" in html
-    assert "ipyrf offset" in html
-    assert "<!--OFFSET-SCRIPT-->" not in html
-    assert "clock-offset-ms" in html
+    assert "Clock offset" in html
+    assert "1.250 ms" in html
+    assert 'id="clock-offset-ms"' not in html
+    assert "data-latency-ms=" not in html
     assert "Per-event stats" not in html
     assert "Traffic events" in html
     assert "Empirical Cumulative Distribution Function" in html

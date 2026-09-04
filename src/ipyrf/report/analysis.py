@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .data import (
+    CLOCK_UNSYNCED_WARNING,
     REPORT_VERSION,
     Ecdf,
     EventSpan,
@@ -241,7 +242,10 @@ def analyze(
     meta = packets.metadata or {}
     protocol = _optional_str(meta.get("protocol"))
     sequence_kind = _optional_str(meta.get("sequence"))
+    latency_enabled = _optional_bool(meta.get("latency_enabled"))
     show_loss = protocol != "tcp" and sequence_kind != "receive_order"
+    if latency_enabled is False:
+        warnings.append(CLOCK_UNSYNCED_WARNING)
 
     pattern_name = None
     pattern_type = None
@@ -305,6 +309,7 @@ def analyze(
         congestion_control=_optional_str(meta.get("congestion_control")),
         show_loss=show_loss,
         clock_offset_ms=offset_ms,
+        latency_enabled=latency_enabled,
         warnings=warnings,
     )
 
@@ -552,6 +557,26 @@ def _ecdf(sorted_values: Sequence[float]) -> Ecdf:
         values.append(float(sorted_values[i]))
         probabilities.append((i + 1) / n)
     return Ecdf(values=values, probabilities=probabilities)
+
+
+def _optional_bool(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("true", "1", "yes"):
+            return True
+        if text in ("false", "0", "no"):
+            return False
+    return None
 
 
 def _optional_str(value: Any) -> Optional[str]:

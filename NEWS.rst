@@ -14,10 +14,12 @@ Latest
   this host and a remote machine over SSH. Useful for interpreting
   one-way latency in ``--record`` CSVs.
 * Minor: ``ipyrf-report --clock-offset MS`` adds a clock offset to
-  one-way latency. The HTML report also has a clock-offset field that
-  can be changed after the file is generated.
+  one-way latency at report generation time.
 * Patch: ``ipyrf offset`` discards an untimed warmup round trip so SSH
   handshake and host-key prompts are not counted as the first sample.
+* Patch: ``ipyrf-report`` HTML warns when a recording has
+  ``latency_enabled`` false that sender and receiver clocks were not
+  necessarily synchronized. Latency plots are still included.
 * Patch: ``ipyrf-report`` HTML generation is much faster when a traffic
   pattern has many events.
 * Minor: Added ``ipyrf-report`` to generate a self-contained interactive

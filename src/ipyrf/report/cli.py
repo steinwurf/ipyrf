@@ -87,8 +87,7 @@ def _main() -> None:
         help=(
             "Add this many milliseconds to one-way latency. Use the value "
             "printed by 'ipyrf offset' when run on the receiving host "
-            "against the sender. The HTML report can also change this "
-            "after generation"
+            "against the sender"
         ),
     )
     args = parser.parse_args()

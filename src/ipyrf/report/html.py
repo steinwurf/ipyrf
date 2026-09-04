@@ -134,7 +134,6 @@ def write_html(
         title=html.escape(report_title),
         subtitle=_subtitle(data.summary),
         run_meta=_run_meta_html(data.summary),
-        clock_offset=_clock_offset_control(data.summary),
         kpis=_kpi_cards(data.summary),
         intro=_intro_html(data.summary),
         warnings=_warnings(data.summary.warnings),
@@ -142,7 +141,6 @@ def write_html(
         footer=_footer(data.summary),
     )
     document = document.replace("<!--PLOTS-->", "\n".join(sections), 1)
-    document = document.replace("<!--OFFSET-SCRIPT-->", _OFFSET_SCRIPT, 1)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(document, encoding="utf-8")
     return path
@@ -214,6 +212,15 @@ def _run_meta_html(summary: Summary) -> str:
         items.append(("Sequence", summary.sequence_kind.replace("_", " "), tip))
     if summary.stop_reason:
         items.append(("Stop", summary.stop_reason, None))
+    if summary.clock_offset_ms:
+        items.append(
+            (
+                "Clock offset",
+                _fmt_ms(summary.clock_offset_ms),
+                "Added to one-way latency at report generation "
+                "(ipyrf-report --clock-offset).",
+            )
+        )
     if not items:
         return ""
     chips = []
@@ -265,13 +272,8 @@ def _kpi_cards(summary: Summary) -> str:
     for card in cards:
         label, value, tip = card[0], card[1], card[2]
         if label.startswith("Latency "):
-            ms = value
-            shown = _fmt_ms(ms)
-            ms_attr = "" if ms is None else f' data-latency-ms="{ms:.9g}"'
-            value_html = (
-                f'<div class="value kpi-latency"{ms_attr}>'
-                f"{html.escape(shown)}</div>"
-            )
+            shown = _fmt_ms(value)
+            value_html = f'<div class="value">{html.escape(shown)}</div>'
         else:
             value_html = f'<div class="value">{html.escape(value)}</div>'
         items.append(
@@ -357,8 +359,8 @@ def _glossary_html(summary: Optional[Summary] = None) -> str:
         (
             "Latency",
             "One-way delay: received timestamp minus transmitted timestamp, "
-            "plus the clock offset (sender minus receiver). Measure it with "
-            "ipyrf offset on the receiving host.",
+            "plus any clock offset passed to ipyrf-report --clock-offset. "
+            "Measure the offset with ipyrf offset on the receiving host.",
         ),
     ]
     if summary is None or summary.show_loss:
@@ -434,113 +436,6 @@ def _fmt_ms(value: Optional[float]) -> str:
     return f"{value:.3f} ms"
 
 
-def _clock_offset_control(summary: Summary) -> str:
-    baked = float(summary.clock_offset_ms or 0.0)
-    value = "0" if baked == 0 else f"{baked:.6g}"
-    return (
-        '<label class="clock-offset">'
-        "<span>Clock offset</span>"
-        f'<input id="clock-offset-ms" type="number" step="any" '
-        f'value="{html.escape(value)}" data-baked="{html.escape(value)}"/>'
-        "<span>ms</span>"
-        '<span class="hint">Added to one-way latency. Use the '
-        "<code>ipyrf offset</code> value measured from the receiver "
-        "to the sender. You can change it here without regenerating.</span>"
-        "</label>"
-    )
-
-
-_OFFSET_SCRIPT = """
-<script>
-(function () {
-  var input = document.getElementById("clock-offset-ms");
-  if (!input) return;
-  var baked = parseFloat(input.getAttribute("data-baked") || "0");
-  if (isNaN(baked)) baked = 0;
-
-  function fmtMs(value) {
-    if (value === null || isNaN(value)) return "—";
-    if (Math.abs(value) < 0.01) return (value * 1000).toFixed(2) + " µs";
-    return value.toFixed(3) + " ms";
-  }
-
-  function graphs() {
-    return Array.prototype.slice.call(
-      document.querySelectorAll(".js-plotly-plot, .plotly-graph-div")
-    );
-  }
-
-  function apply() {
-    var offset = parseFloat(input.value);
-    if (isNaN(offset)) offset = baked;
-    var delta = offset - baked;
-    Array.prototype.forEach.call(
-      document.querySelectorAll("[data-latency-ms]"),
-      function (el) {
-        var base = parseFloat(el.getAttribute("data-latency-ms"));
-        if (isNaN(base)) return;
-        el.textContent = fmtMs(base + delta);
-      }
-    );
-    if (!window.Plotly) return;
-    graphs().forEach(function (gd) {
-      if (!gd.data) return;
-      var yIdx = [];
-      var yVals = [];
-      var xIdx = [];
-      var xVals = [];
-      var shiftShapes = false;
-      gd.data.forEach(function (trace, i) {
-        var name = trace.name || "";
-        if (name.indexOf("Latency ") === 0) {
-          if (!trace._ipyrfBaseY) {
-            trace._ipyrfBaseY = Array.prototype.slice.call(trace.y || []);
-          }
-          yIdx.push(i);
-          yVals.push(trace._ipyrfBaseY.map(function (v) {
-            return v == null || v === "" ? v : v + delta;
-          }));
-        }
-        if (name === "ECDF" || name === "Count") {
-          if (!trace._ipyrfBaseX) {
-            trace._ipyrfBaseX = Array.prototype.slice.call(trace.x || []);
-          }
-          xIdx.push(i);
-          xVals.push(trace._ipyrfBaseX.map(function (v) {
-            return v == null || v === "" ? v : v + delta;
-          }));
-          if (name === "ECDF") shiftShapes = true;
-        }
-      });
-      if (yIdx.length) Plotly.restyle(gd, {y: yVals}, yIdx);
-      if (xIdx.length) Plotly.restyle(gd, {x: xVals}, xIdx);
-      if (shiftShapes && gd.layout && gd.layout.shapes) {
-        if (!gd._ipyrfBaseShapes) {
-          gd._ipyrfBaseShapes = gd.layout.shapes.map(function (s) {
-            return {x0: s.x0, x1: s.x1};
-          });
-        }
-        var shapes = gd.layout.shapes.map(function (s, i) {
-          var next = Object.assign({}, s);
-          var base = gd._ipyrfBaseShapes[i];
-          if (base && base.x0 === base.x1) {
-            next.x0 = base.x0 + delta;
-            next.x1 = base.x1 + delta;
-          }
-          return next;
-        });
-        Plotly.relayout(gd, {shapes: shapes});
-      }
-    });
-  }
-
-  input.addEventListener("input", apply);
-  input.addEventListener("change", apply);
-})();
-</script>
-"""
-
-
 _DOCUMENT = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -605,34 +500,6 @@ _DOCUMENT = """<!DOCTYPE html>
     }}
     .run-value {{
       color: #fff;
-    }}
-    .clock-offset {{
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 0.45rem 0.7rem;
-      margin: 0.9rem 0 0;
-      color: #c5d0e0;
-      font-size: 0.85rem;
-    }}
-    .clock-offset input {{
-      width: 8.5rem;
-      padding: 0.28rem 0.5rem;
-      border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 6px;
-      background: rgba(255,255,255,0.08);
-      color: #fff;
-      font: inherit;
-      font-variant-numeric: tabular-nums;
-    }}
-    .clock-offset .hint {{
-      flex-basis: 100%;
-      color: #8e9aab;
-      font-size: 0.75rem;
-      line-height: 1.4;
-    }}
-    .clock-offset code {{
-      font-size: 0.72rem;
     }}
     .kpis {{
       display: grid;
@@ -761,7 +628,6 @@ _DOCUMENT = """<!DOCTYPE html>
     <h1>{title}</h1>
     <div class="subtitle">{subtitle}</div>
     {run_meta}
-    {clock_offset}
     <div class="kpis">{kpis}</div>
   </header>
   <main>
@@ -771,7 +637,6 @@ _DOCUMENT = """<!DOCTYPE html>
     {glossary}
   </main>
   <footer>{footer}</footer>
-  <!--OFFSET-SCRIPT-->
 </body>
 </html>
 """

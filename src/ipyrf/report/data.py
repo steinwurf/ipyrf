@@ -8,6 +8,11 @@ from typing import Any, Dict, List, Optional
 
 REPORT_VERSION = 1
 
+CLOCK_UNSYNCED_WARNING = (
+    "Latency measurement was not enabled for this test; "
+    "sender and receiver clocks were not necessarily synchronized"
+)
+
 
 @dataclass
 class PacketTrace:
@@ -170,6 +175,7 @@ class Summary:
     congestion_control: Optional[str] = None
     show_loss: bool = True
     clock_offset_ms: float = 0.0
+    latency_enabled: Optional[bool] = None
     warnings: List[str] = field(default_factory=list)
 
 
