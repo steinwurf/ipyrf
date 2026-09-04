@@ -6,7 +6,7 @@ import hashlib
 import os.path
 
 APPNAME = "ipyrf"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 
 def options(opt):

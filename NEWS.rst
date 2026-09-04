@@ -6,6 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
+* tbd
+
+2.1.1
+-----
 * Patch: Removed the interactive clock-offset field from ``ipyrf-report``
   HTML. Offset is applied only at report generation via
   ``--clock-offset``.
