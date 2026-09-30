@@ -24,9 +24,10 @@ class TrafficPattern:
         raise NotImplementedError
 
     def duration(self) -> float:
-        """Return the relative time of the final availability event.
+        """Return the pattern length in seconds.
 
-        Returns ``0.0`` if the pattern has no events.
+        ``--loops`` uses this as the repetition period. Returns ``0.0``
+        if the pattern is empty.
         """
         raise NotImplementedError
 
@@ -67,12 +68,18 @@ class TraceTrafficPattern(TrafficPattern):
     Each event makes ``nbytes`` available at relative time ``timestamp``
     (seconds from start). Timestamps must be non-decreasing and ``>= 0``;
     ``nbytes`` must be ``>= 0``.
+
+    Optional ``duration`` is the pattern length in seconds. When omitted,
+    the last event timestamp is used (``0.0`` if there are no events).
+    When set, it must be ``>=`` the last event timestamp so ``--loops``
+    can start the next copy after the previous one ends.
     """
 
     def __init__(
         self,
         events: Sequence[Tuple[float, int]],
         metadata: Optional[Dict[str, Any]] = None,
+        duration: Optional[float] = None,
     ):
         times: List[float] = []
         cumulative: List[int] = []
@@ -97,6 +104,29 @@ class TraceTrafficPattern(TrafficPattern):
             cumulative.append(total)
             prev_ts = ts
 
+        last_ts = times[-1] if times else 0.0
+        if duration is None:
+            self._duration = last_ts
+        else:
+            if (
+                isinstance(duration, bool)
+                or not isinstance(duration, (int, float))
+            ):
+                raise TrafficPatternError(
+                    f"duration must be a number, got {duration!r}"
+                )
+            duration = float(duration)
+            if duration < 0:
+                raise TrafficPatternError(
+                    f"duration must be >= 0, got {duration}"
+                )
+            if duration < last_ts:
+                raise TrafficPatternError(
+                    f"duration must be >= last event timestamp "
+                    f"({last_ts}), got {duration}"
+                )
+            self._duration = duration
+
         self._times = times
         self._cumulative = cumulative
         self.metadata: Dict[str, Any] = dict(metadata) if metadata else {}
@@ -108,9 +138,7 @@ class TraceTrafficPattern(TrafficPattern):
         return self._cumulative[index]
 
     def duration(self) -> float:
-        if not self._times:
-            return 0.0
-        return self._times[-1]
+        return self._duration
 
     def total_bytes(self) -> int:
         if not self._cumulative:
@@ -419,8 +447,12 @@ def _parse_trace(
     for i, raw in enumerate(events_data):
         events.append(_parse_event(raw, source=source, index=i))
 
+    duration = None
+    if "duration" in data:
+        duration = _parse_trace_duration(data["duration"], loc=source)
+
     try:
-        return TraceTrafficPattern(events, metadata=metadata)
+        return TraceTrafficPattern(events, metadata=metadata, duration=duration)
     except TrafficPatternError as e:
         raise TrafficPatternError(f"{source}: {e}") from e
 
@@ -505,6 +537,19 @@ def _parse_timestamp(value: Any, *, loc: str) -> float:
             f"{loc}: 'timestamp' must be >= 0, got {timestamp}"
         )
     return timestamp
+
+
+def _parse_trace_duration(value: Any, *, loc: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TrafficPatternError(
+            f"{loc}: 'duration' must be a number, got {value!r}"
+        )
+    duration = float(value)
+    if duration < 0:
+        raise TrafficPatternError(
+            f"{loc}: 'duration' must be >= 0, got {duration}"
+        )
+    return duration
 
 
 def _parse_duration(value: Any, *, loc: str) -> float:

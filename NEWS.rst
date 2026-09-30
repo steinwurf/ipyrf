@@ -6,7 +6,10 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Minor: Trace JSON accepts optional top-level ``duration`` (seconds).
+  ``--loops`` uses it as the repetition period instead of the last
+  event timestamp. ``ipyrf generate video`` writes ``frames / fps``
+  so a 30 fps GOP stays at 30 fps when looped.
 
 2.1.1
 -----
