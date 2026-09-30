@@ -141,9 +141,13 @@ def _pattern_info_from_document(data: Dict[str, Any], *, source: str) -> Pattern
     if pattern_type == "trace":
         raw_events = data.get("events") or []
         times = [_as_float(raw["timestamp"]) for raw in raw_events]
+        if "duration" in data:
+            pattern_end = _as_float(data["duration"])
+        else:
+            pattern_end = times[-1] if times else 0.0
         for i, raw in enumerate(raw_events):
             start = times[i]
-            end = times[i + 1] if i + 1 < len(times) else start
+            end = times[i + 1] if i + 1 < len(times) else pattern_end
             events.append(
                 PatternEvent(
                     event_id=i + 1,

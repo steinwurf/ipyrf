@@ -44,6 +44,9 @@ def generate_video_trace(
     corresponding frame size and is tagged with that frame type. The result is
     a standard ``{"version": 1, "type": "trace", ...}`` document — not a
     video-specific pattern type.
+
+    Top-level ``duration`` is ``frames / fps`` so ``--loops`` starts the
+    next copy one frame interval after the last frame, not on top of it.
     """
     if not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0:
         raise VideoTraceError(f"fps must be > 0, got {fps!r}")
@@ -93,7 +96,9 @@ def generate_video_trace(
             raise VideoTraceError("metadata must be a dict when provided")
         doc_metadata.update(metadata)
 
-    return _trace_document(events, doc_metadata)
+    return _trace_document(
+        events, doc_metadata, duration=num_frames / float(fps)
+    )
 
 
 def generate_video_trace_from_ffprobe(
@@ -286,14 +291,19 @@ def write_trace_document(path: Union[str, Path], doc: Dict[str, Any]) -> None:
 
 
 def _trace_document(
-    events: Sequence[Dict[str, Any]], metadata: Dict[str, Any]
+    events: Sequence[Dict[str, Any]],
+    metadata: Dict[str, Any],
+    duration: Optional[float] = None,
 ) -> Dict[str, Any]:
-    return {
+    doc: Dict[str, Any] = {
         "version": SUPPORTED_TRACE_VERSION,
         "type": "trace",
-        "metadata": metadata,
-        "events": list(events),
     }
+    if duration is not None:
+        doc["duration"] = float(duration)
+    doc["metadata"] = metadata
+    doc["events"] = list(events)
+    return doc
 
 
 def _extract_ffprobe_frames(data: Any) -> List[Any]:

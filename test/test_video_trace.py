@@ -25,6 +25,7 @@ def test_generate_video_trace_basic_gop():
     )
     assert doc["version"] == 1
     assert doc["type"] == "trace"
+    assert doc["duration"] == pytest.approx(1.0)
     assert len(doc["events"]) == 30
     assert doc["metadata"]["generator"] == "synthetic-video"
     assert doc["metadata"]["gop"] == "IPBB"
@@ -60,7 +61,8 @@ def test_generate_video_trace_loads_as_normal_trace():
     assert isinstance(pattern, TraceTrafficPattern)
     # 0.2 * 25 = 5 frames: I P P P I
     assert pattern.total_bytes() == 10_000 + 1_000 * 3 + 10_000
-    assert pattern.duration() == pytest.approx(4.0 / 25.0)
+    assert doc["duration"] == pytest.approx(5.0 / 25.0)
+    assert pattern.duration() == pytest.approx(5.0 / 25.0)
 
 
 def test_write_video_trace_roundtrip(tmp_path: Path):
@@ -80,6 +82,7 @@ def test_write_video_trace_roundtrip(tmp_path: Path):
     assert len(loaded["events"]) == 5
     pattern = parse_traffic_pattern(loaded)
     assert pattern.total_bytes() == 100 + 50 + 100 + 50 + 100
+    assert pattern.duration() == pytest.approx(0.5)
 
 
 def test_generate_video_trace_merges_metadata():

@@ -11,6 +11,7 @@ from ipyrf.traffic_pattern import (
     load_traffic_pattern,
     parse_traffic_pattern,
 )
+from ipyrf.video_trace import generate_video_trace
 
 
 def test_empty_trace():
@@ -135,6 +136,14 @@ def test_parse_valid_trace_document():
     assert pattern.duration() == 0.25
     assert pattern.metadata == {"name": "example"}
     assert pattern.cumulative_bytes(0.25) == 300
+
+
+def test_parse_trace_uses_optional_duration():
+    pattern = parse_traffic_pattern(_valid_doc(duration=1.0))
+    assert pattern.duration() == pytest.approx(1.0)
+    assert pattern.cumulative_bytes(0.25) == 300
+    assert pattern.cumulative_bytes(0.99) == 300
+    assert pattern.next_event_time(0.25) is None
 
 
 def test_load_traffic_pattern_from_file(tmp_path: Path):
@@ -300,6 +309,33 @@ def test_load_rejects_invalid_json(tmp_path: Path):
             },
             "tags\\[0\\] must be a string",
         ),
+        (
+            {
+                "version": 1,
+                "type": "trace",
+                "duration": "1",
+                "events": [{"timestamp": 0.0, "nbytes": 1}],
+            },
+            "duration.*must be a number",
+        ),
+        (
+            {
+                "version": 1,
+                "type": "trace",
+                "duration": -1,
+                "events": [{"timestamp": 0.0, "nbytes": 1}],
+            },
+            "duration.*>= 0",
+        ),
+        (
+            {
+                "version": 1,
+                "type": "trace",
+                "duration": 0.5,
+                "events": [{"timestamp": 1.0, "nbytes": 1}],
+            },
+            "duration must be >= last event timestamp",
+        ),
     ],
 )
 def test_parse_rejects_malformed_documents(doc, match):
@@ -441,6 +477,49 @@ def test_looped_trace_repeats_timeline_and_event_ids():
     assert pattern.event_at_offset(900) == (0, 0)
 
 
+def test_looped_30fps_gop_does_not_start_one_frame_early():
+    """A 1 s 30 fps GOP looped three times must stay at 30 fps.
+
+    If the loop period is the last event timestamp (29/30 s) instead of
+    the clip length (1 s), the next I-frame is sent together with the
+    previous last P-frame. I-frames then land at 0, 966.7, 1933.3 ms
+    instead of 0, 1000, 2000 ms, and three loops finish in 2.9 s
+    (~31 fps) instead of 3 s.
+    """
+    i_size = 13_000
+    p_size = 3_000
+    fps = 30
+    clip_duration = 1.0
+    loops = 3
+    doc = generate_video_trace(
+        fps=fps,
+        gop="I" + "P" * 29,
+        i_size=i_size,
+        p_size=p_size,
+        b_size=0,
+        duration=clip_duration,
+    )
+    inner = parse_traffic_pattern(doc)
+    pattern = LoopedTrafficPattern(inner, loops)
+
+    bytes_per_loop = inner.total_bytes()
+    last_frame_t = (fps - 1) / fps
+    frames = fps * loops
+
+    assert pattern.duration() == pytest.approx(loops * clip_duration)
+    assert frames / pattern.duration() == pytest.approx(float(fps))
+
+    for loop_index, t in enumerate((0.0, 1.0, 2.0)):
+        before = loop_index * bytes_per_loop
+        if t > 0.0:
+            assert pattern.cumulative_bytes(t - 1e-9) == before
+        assert pattern.cumulative_bytes(t) == before + i_size
+
+    # Last P-frame of loop 0 must not coincide with the next I-frame.
+    assert pattern.cumulative_bytes(last_frame_t) == bytes_per_loop
+    assert pattern.next_event_time(last_frame_t) == pytest.approx(clip_duration)
+
+
 def test_looped_trace_preserves_leading_gap():
     inner = TraceTrafficPattern([(0.5, 100), (1.0, 50)])
     pattern = LoopedTrafficPattern(inner, 2)
@@ -503,6 +582,25 @@ def test_looped_zero_duration_collapses_to_start():
     assert pattern.event_at_offset(0) == (1, 100)
     assert pattern.event_at_offset(250) == (1, 50)
     assert pattern.event_at_offset(400) == (0, 0)
+
+
+def test_trace_explicit_duration_is_loop_period():
+    inner = TraceTrafficPattern(
+        [(0.0, 100), (0.5, 200)],
+        duration=1.0,
+    )
+    pattern = LoopedTrafficPattern(inner, 2)
+    assert inner.duration() == pytest.approx(1.0)
+    assert pattern.duration() == pytest.approx(2.0)
+    assert pattern.cumulative_bytes(0.5) == 300
+    assert pattern.cumulative_bytes(0.99) == 300
+    assert pattern.cumulative_bytes(1.0) == 400
+    assert pattern.next_event_time(0.5) == pytest.approx(1.0)
+
+
+def test_trace_rejects_duration_before_last_event():
+    with pytest.raises(TrafficPatternError, match="last event timestamp"):
+        TraceTrafficPattern([(0.0, 1), (1.0, 1)], duration=0.5)
 
 
 def test_looped_pattern_rejects_non_positive_loops():

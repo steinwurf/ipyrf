@@ -172,9 +172,13 @@ JSON pattern instead of ``--time``. Two pattern types are supported.
    }
 
 Each event makes ``nbytes`` available at relative time ``timestamp`` (seconds
-from test start). Budgets are in socket bytes as counted by ipyrf (for TCP that
-includes the per-record header). Large events are fragmented into normal
-TCP/UDP send chunks without changing when those bytes become available.
+from test start). Optional top-level ``duration`` (seconds) is the pattern
+length used by ``--loops``. When omitted, the last event timestamp is used,
+so looping a regular frame sequence starts the next copy on the last frame.
+``ipyrf generate video`` writes ``frames / fps`` so a 30 fps clip keeps a
+one-frame gap between loops. Budgets are in socket bytes as counted by ipyrf
+(for TCP that includes the per-record header). Large events are fragmented into
+normal TCP/UDP send chunks without changing when those bytes become available.
 Sends do not cross event or period boundaries. Each UDP/TCP record carries a
 1-based ``event_id`` matching the event or period index in the JSON file
 (``0`` when not using a traffic pattern).
@@ -203,7 +207,8 @@ pass ``--bandwidth`` together with ``--traffic-pattern`` to cap egress rate: the
 pattern decides when bytes become available, and the pacer limits how quickly
 they may be transmitted. Pass ``--loops N`` to replay the pattern N times;
 each repetition starts when the previous one ends (at the pattern's
-duration). Event ids refer to the original file and repeat each loop.
+``duration``, or the last event timestamp when ``duration`` is omitted).
+Event ids refer to the original file and repeat each loop.
 ``--traffic-pattern`` cannot be combined with ``--interactive``. With
 ``--reverse``, only the file name is sent to the server (see Reverse
 mode).
@@ -244,7 +249,8 @@ ffprobe frames dump:
    ipyrf udp client 127.0.0.1 --traffic-pattern video.json -l 1200
 
 Each event is tagged with the frame type (``I``, ``P``, or ``B`` when known).
-Generation parameters / source path are stored under ``metadata``.
+Generation parameters / source path are stored under ``metadata``. Synthetic
+traces also set top-level ``duration`` to ``frames / fps``.
 
 Interactive mode
 ----------------

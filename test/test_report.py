@@ -331,6 +331,27 @@ def test_load_piecewise_rate_pattern(tmp_path):
     assert info.events[1].nbytes == 0
 
 
+def test_load_trace_pattern_uses_duration_for_last_event(tmp_path):
+    path = tmp_path / "trace.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "type": "trace",
+                "duration": 1.0,
+                "events": [
+                    {"timestamp": 0.0, "nbytes": 100},
+                    {"timestamp": 0.5, "nbytes": 50},
+                ],
+            }
+        )
+    )
+    info = load_pattern_info(path)
+    assert info.events[0].end_s == pytest.approx(0.5)
+    assert info.events[1].start_s == pytest.approx(0.5)
+    assert info.events[1].end_s == pytest.approx(1.0)
+
+
 def test_merged_shading_spans_joins_same_tags_across_gaps():
     spans = [
         EventSpan(1, 0.00, 0.01, ["I"]),
