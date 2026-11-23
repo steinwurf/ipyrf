@@ -7,6 +7,7 @@ from ipyrf.tcp import (
     MAX_TCP_PAYLOAD,
     TCP_HDR,
     TCP_HDR_SIZE,
+    TcpSender,
     parse_tcp_record,
 )
 
@@ -95,3 +96,70 @@ def test_tcp_framing_rejects_oversized_payload():
     assert record is None
     assert error == f"invalid payload length: {MAX_TCP_PAYLOAD + 1}"
     assert len(recv_buffer) == TCP_HDR_SIZE
+
+
+class _RecordingSocket:
+    """Accepts at most ``chunk`` bytes per send() and keeps every call."""
+
+    def __init__(self, chunk=None):
+        self.chunk = chunk
+        self.sends = []
+
+    def send(self, data):
+        data = bytes(data[: self.chunk] if self.chunk else data)
+        self.sends.append(data)
+        return len(data)
+
+
+def _sender(sock):
+    return TcpSender(
+        sock, log=None, controller=None, enable_latency=True, host="", port=0
+    )
+
+
+def test_tcp_sender_sends_each_record_in_one_call():
+    sock = _RecordingSocket()
+    sender = _sender(sock)
+    assert sender.send_record(DEFAULT_TCP_PAYLOAD, LATENCY_ENABLED, 11, 1)
+    assert sender.send_record(0, LATENCY_DISABLED, 22, 2)
+    assert sender.send_record(MAX_TCP_PAYLOAD, LATENCY_ENABLED, 33, 3)
+
+    assert [len(d) for d in sock.sends] == [
+        TCP_HDR_SIZE + DEFAULT_TCP_PAYLOAD,
+        TCP_HDR_SIZE,
+        TCP_HDR_SIZE + MAX_TCP_PAYLOAD,
+    ]
+    assert sender.bytes_sent == sum(len(d) for d in sock.sends)
+
+    recv_buffer = bytearray(b"".join(sock.sends))
+    parsed = []
+    while True:
+        record, error = parse_tcp_record(recv_buffer)
+        assert error is None
+        if record is None:
+            break
+        parsed.append(
+            (
+                record.latency_flag,
+                record.payload_len,
+                record.timestamp_ns,
+                record.event_id,
+            )
+        )
+    assert recv_buffer == b""
+    assert parsed == [
+        (LATENCY_ENABLED, DEFAULT_TCP_PAYLOAD, 11, 1),
+        (LATENCY_DISABLED, 0, 22, 2),
+        (LATENCY_ENABLED, MAX_TCP_PAYLOAD, 33, 3),
+    ]
+
+
+def test_tcp_sender_finishes_a_record_after_a_short_send():
+    sock = _RecordingSocket(chunk=500)
+    sender = _sender(sock)
+    assert sender.send_record(DEFAULT_TCP_PAYLOAD, LATENCY_ENABLED, 44, 4)
+
+    data = b"".join(sock.sends)
+    assert len(data) == TCP_HDR_SIZE + DEFAULT_TCP_PAYLOAD
+    assert TCP_HDR.unpack_from(data) == (LATENCY_ENABLED, DEFAULT_TCP_PAYLOAD, 44, 4)
+    assert data[TCP_HDR_SIZE:] == b"\x00" * DEFAULT_TCP_PAYLOAD

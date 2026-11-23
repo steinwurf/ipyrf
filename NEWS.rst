@@ -6,7 +6,11 @@ every change, see the Git log.
 
 Latest
 ------
-* tbd
+* Patch: The TCP sender sends each record, header and payload, with one
+  ``send()`` call. With ``TCP_NODELAY`` the 17-byte header went out as a
+  segment of its own, so every other packet was a header and the packet
+  rate was twice what the data needs; a path that is limited per packet
+  measured about half its throughput.
 
 2.2.0
 -----

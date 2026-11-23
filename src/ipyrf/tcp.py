@@ -321,7 +321,9 @@ class TcpSender:
         self.start = 0.0
         self.last_ts = 0.0
         self.last_bytes = 0
-        self._payload = b"\x00" * MAX_TCP_PAYLOAD
+        # Header and payload of a record go out in one send(); the payload
+        # part of the buffer stays zero
+        self._record = bytearray(TCP_HDR_SIZE + MAX_TCP_PAYLOAD)
 
     def send_record(
         self,
@@ -344,14 +346,14 @@ class TcpSender:
         if event_id is None:
             event_id = self.controller.current_event_id()
 
-        header = TCP_HDR.pack(latency_flag, payload_len, timestamp_ns, event_id)
-        if not self._send_all(header):
-            return False
-        if payload_len > 0:
-            view = memoryview(self._payload)
-            if not self._send_all(view[:payload_len]):
-                return False
-        return True
+        TCP_HDR.pack_into(
+            self._record, 0, latency_flag, payload_len, timestamp_ns, event_id
+        )
+        # One send() per record: with TCP_NODELAY a header sent on its own
+        # leaves as a segment of its own, which doubles the packet rate
+        return self._send_all(
+            memoryview(self._record)[: TCP_HDR_SIZE + payload_len]
+        )
 
     def run(self) -> None:
         """Send test data. The first record is payload (current behavior)."""
